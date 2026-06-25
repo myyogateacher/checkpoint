@@ -1,0 +1,36 @@
+{
+  "name": "checkpoint",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Checkpoint — database migration assistant",
+  "scripts": {
+    "dev": "concurrently -k -n client,server -c cyan,green \"bun run dev:client\" \"bun run dev:server\"",
+    "dev:client": "vite",
+    "dev:server": "TZ=UTC bun --watch server/index.ts",
+    "start": "NODE_ENV=production TZ=UTC bun run start:server",
+    "start:server": "TZ=UTC bun server/index.ts",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-hot-toast": "^2.6.0",
+    "react-icons": "^5.5.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.0",
+    "@types/node": "^24.4.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "tailwindcss": "^4.2.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.3.1"
+  }
+}

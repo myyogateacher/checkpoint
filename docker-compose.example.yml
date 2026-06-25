@@ -1,0 +1,29 @@
+services:
+  checkpoint:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - SESSION_SECRET=${SESSION_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - APP_DATABASE_URL=postgres://checkpoint:checkpoint@meta-db:5432/checkpoint
+    depends_on:
+      - meta-db
+    restart: unless-stopped
+
+  # Checkpoint's own metadata store (projects, migrations, audit logs).
+  meta-db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=checkpoint
+      - POSTGRES_PASSWORD=checkpoint
+      - POSTGRES_DB=checkpoint
+    volumes:
+      - checkpoint-meta:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  checkpoint-meta:
