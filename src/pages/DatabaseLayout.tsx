@@ -18,12 +18,18 @@ export function DatabaseLayout() {
   const { databaseId = '' } = useParams()
   const [database, setDatabase] = useState<Database | null | undefined>(null)
   const [projectName, setProjectName] = useState<string | null>(null)
+  const [envName, setEnvName] = useState<string | null>(null)
 
   useEffect(() => {
     setDatabase(null)
     void api.getDatabase(databaseId).then((db) => {
       setDatabase(db ?? undefined)
-      if (db) void api.getProject(db.project_id).then((p) => setProjectName(p?.name ?? null))
+      if (db) {
+        void api.getProject(db.project_id).then((p) => setProjectName(p?.name ?? null))
+        void api
+          .getEnvironments(db.project_id)
+          .then((envs) => setEnvName(envs.find((e) => e.id === db.environment_id)?.name ?? null))
+      }
     })
   }, [databaseId])
 
@@ -45,8 +51,10 @@ export function DatabaseLayout() {
         title={database.name}
         description={`Last synced ${relativeTime(database.last_synced_at)} · ${database.table_count} tables`}
         breadcrumbs={[
-          { label: 'Projects', to: '/' },
+          { label: 'Projects', to: '/projects' },
           ...(projectName ? [{ label: projectName, to: `/projects/${database.project_id}` }] : []),
+          ...(envName ? [{ label: envName }] : []),
+          { label: ENGINE_LABELS[database.engine] },
           { label: database.name },
         ]}
         actions={
@@ -56,7 +64,7 @@ export function DatabaseLayout() {
           </div>
         }
       />
-      <DatabaseTabs databaseId={database.id} />
+      <DatabaseTabs databaseId={database.id} engine={database.engine} />
       <Outlet context={{ database } satisfies DbContext} />
     </>
   )

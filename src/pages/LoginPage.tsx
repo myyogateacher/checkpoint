@@ -1,15 +1,32 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { FaGoogle } from 'react-icons/fa'
 import { useAuth } from '../context/AuthContext'
-import { Eyebrow } from '../components/ui'
+import { notify } from '../lib/toast'
+import { PASSWORD_AUTH_ENABLED } from '../lib/config'
+import { AuthShell, AuthDivider, authInputClass, GoogleButton, primaryBtnClass } from '../components/AuthShell'
 
 export function LoginPage() {
   const { signIn } = useAuth()
   const navigate = useNavigate()
+  const [mode, setMode] = useState<'signin' | 'forgot'>('signin')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
 
-  async function handleSignIn() {
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      // Mock: any credentials sign you in as the demo admin.
+      await signIn()
+      navigate('/')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function google() {
     setBusy(true)
     try {
       await signIn()
@@ -19,36 +36,96 @@ export function LoginPage() {
     }
   }
 
-  return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md">
-        <div className="mb-6 flex items-center justify-center gap-3">
-          <img src="/checkpoint.svg" alt="Checkpoint" className="h-10 w-10" />
-          <span className="text-xl font-semibold tracking-tight text-slate-800">Checkpoint</span>
-        </div>
-
-        <section className="glass-card rounded-2xl p-8 md:p-10">
-          <Eyebrow>Authentication</Eyebrow>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight">Sign in to continue</h1>
-          <p className="mt-3 text-sm text-slate-600">
-            Checkpoint is the controlled path for database migrations. Access requires Google
-            sign-in; your role determines what you can review and apply.
-          </p>
-
-          <button
-            onClick={handleSignIn}
-            disabled={busy}
-            className="mt-6 inline-flex w-full cursor-pointer items-center justify-center gap-3 rounded-lg border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] transition duration-150 ease-out hover:from-blue-500 hover:to-indigo-500 active:scale-[0.98] disabled:opacity-60"
-          >
-            <FaGoogle />
-            {busy ? 'Signing in…' : 'Continue with Google'}
+  if (mode === 'forgot' && PASSWORD_AUTH_ENABLED) {
+    return (
+      <AuthShell eyebrow="Reset password" title="Forgot your password?" subtitle="Enter your email and we'll send a reset link.">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            notify.success(`If an account exists for ${email || 'that address'}, a reset link is on its way.`)
+            setMode('signin')
+          }}
+          className="space-y-4"
+        >
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              className={authInputClass}
+            />
+          </label>
+          <button type="submit" className={primaryBtnClass}>
+            Send reset link
           </button>
+        </form>
+        <p className="mt-4 text-center text-sm text-slate-500">
+          <button onClick={() => setMode('signin')} className="cursor-pointer font-medium text-indigo-600 hover:underline">
+            Back to sign in
+          </button>
+        </p>
+      </AuthShell>
+    )
+  }
 
-          <p className="mt-4 text-center text-xs text-slate-500">
-            Backend is stubbed — this signs you in locally as an admin for the demo.
-          </p>
-        </section>
-      </div>
-    </main>
+  return (
+    <AuthShell
+      eyebrow="Welcome back"
+      title="Sign in to Checkpoint"
+      subtitle={PASSWORD_AUTH_ENABLED ? 'Use your work email or Google account.' : 'Sign in with your Google account.'}
+    >
+      {PASSWORD_AUTH_ENABLED ? (
+        <>
+          <form onSubmit={submit} className="space-y-4">
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Email</span>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@company.com"
+            className={authInputClass}
+          />
+        </label>
+        <label className="block">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-sm font-medium text-slate-700">Password</span>
+            <button
+              type="button"
+              onClick={() => setMode('forgot')}
+              className="cursor-pointer text-xs font-medium text-indigo-600 hover:underline"
+            >
+              Forgot password?
+            </button>
+          </div>
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            className={authInputClass}
+          />
+        </label>
+            <button type="submit" disabled={busy} className={primaryBtnClass}>
+              {busy ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+          <AuthDivider />
+        </>
+      ) : null}
+
+      <GoogleButton onClick={google} disabled={busy} label="Continue with Google" icon={<FaGoogle />} />
+
+      <p className="mt-6 text-center text-sm text-slate-500">
+        Don't have an account?{' '}
+        <Link to="/signup" className="font-medium text-indigo-600 hover:underline">
+          Sign up
+        </Link>
+      </p>
+    </AuthShell>
   )
 }

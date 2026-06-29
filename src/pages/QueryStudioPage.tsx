@@ -1,119 +1,70 @@
-import { useEffect, useMemo, useState } from 'react'
-import { FaDatabase } from 'react-icons/fa'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
-import type { Database, Environment, Project } from '../types'
-import { ENGINE_LABELS } from '../lib/format'
+import { useOrg } from '../context/OrgContext'
+import type { Database, Environment, Project, SavedQuery } from '../types'
 import { PageHeader } from '../components/PageHeader'
-import { EngineBadge } from '../components/badges'
 import { ReadQueryPanel } from '../components/ReadQueryPanel'
-import { Dropdown } from '../components/Dropdown'
-import { Card, EmptyState, Field, Spinner } from '../components/ui'
+import { Card, Spinner } from '../components/ui'
 
 export function QueryStudioPage() {
+  const [searchParams] = useSearchParams()
+  const savedId = searchParams.get('saved')
+  const { currentOrgId } = useOrg()
+
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [environments, setEnvironments] = useState<Environment[]>([])
   const [databases, setDatabases] = useState<Database[]>([])
-
-  const [projectId, setProjectId] = useState('')
-  const [environmentId, setEnvironmentId] = useState('')
-  const [databaseId, setDatabaseId] = useState('')
+  const [saved, setSaved] = useState<SavedQuery | null>(null)
+  const [savedLoading, setSavedLoading] = useState(false)
 
   useEffect(() => {
     void (async () => {
       const [projs, envs, dbs] = await Promise.all([
-        api.getProjects(),
+        api.getProjects(currentOrgId ?? undefined),
         api.getAllEnvironments(),
-        api.getDatabases(),
+        api.getDatabases(undefined, currentOrgId ?? undefined),
       ])
       setProjects(projs)
       setEnvironments(envs)
       setDatabases(dbs)
     })()
-  }, [])
+  }, [currentOrgId])
 
-  const projectEnvs = useMemo(
-    () => environments.filter((e) => e.project_id === projectId),
-    [environments, projectId],
-  )
-  const envDatabases = useMemo(
-    () => databases.filter((d) => d.environment_id === environmentId),
-    [databases, environmentId],
-  )
-  const selectedDb = databases.find((d) => d.id === databaseId)
+  useEffect(() => {
+    if (!savedId) {
+      setSaved(null)
+      return
+    }
+    setSavedLoading(true)
+    void api.getSavedQuery(savedId).then((q) => {
+      setSaved(q ?? null)
+      setSavedLoading(false)
+    })
+  }, [savedId])
 
-  function chooseProject(id: string) {
-    setProjectId(id)
-    setEnvironmentId('')
-    setDatabaseId('')
-  }
-  function chooseEnvironment(id: string) {
-    setEnvironmentId(id)
-    setDatabaseId('')
-  }
-
-  if (projects === null) {
-    return (
-      <Card className="p-6">
-        <Spinner label="Loading workspace…" />
-      </Card>
-    )
-  }
+  const ready = projects !== null && !(savedId && savedLoading)
 
   return (
     <>
       <PageHeader
         eyebrow="Query Studio"
         title="Run a read query"
-        description="Pick a project, environment, and database, then run read-only queries against its read connection."
+        description="Open a tab, pick its project / environment / database, and run read-only queries. Each tab keeps its own database and query."
       />
 
-      <Card className="mb-4 p-5">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Project">
-            <Dropdown
-              value={projectId}
-              placeholder="Select project…"
-              options={projects.map((p) => ({ value: p.id, label: p.name }))}
-              onChange={chooseProject}
-            />
-          </Field>
-          <Field label="Environment">
-            <Dropdown
-              value={environmentId}
-              placeholder={projectId ? 'Select environment…' : '—'}
-              disabled={!projectId}
-              options={projectEnvs.map((env) => ({ value: env.id, label: env.name }))}
-              onChange={chooseEnvironment}
-            />
-          </Field>
-          <Field label="Database">
-            <Dropdown
-              value={databaseId}
-              placeholder={environmentId ? 'Select database…' : '—'}
-              disabled={!environmentId}
-              options={envDatabases.map((db) => ({ value: db.id, label: `${db.name} · ${ENGINE_LABELS[db.engine]}` }))}
-              onChange={setDatabaseId}
-            />
-          </Field>
-        </div>
-
-        {selectedDb ? (
-          <div className="mt-4 flex items-center gap-2 border-t border-slate-200/50 pt-3 text-sm text-slate-600">
-            <FaDatabase className="text-slate-400" size={13} />
-            <span className="font-mono">{selectedDb.name}</span>
-            <EngineBadge engine={selectedDb.engine} />
-            <span className="text-xs text-slate-400">{selectedDb.read_connection.host}</span>
-          </div>
-        ) : null}
-      </Card>
-
-      {selectedDb ? (
-        <ReadQueryPanel key={selectedDb.id} database={selectedDb} />
+      {!ready ? (
+        <Card className="p-6">
+          <Spinner label="Loading workspace…" />
+        </Card>
       ) : (
-        <EmptyState
-          icon={<FaDatabase />}
-          title="No database selected"
-          hint="Choose a project, environment, and database above to start querying."
+        <ReadQueryPanel
+          // Remount when a different saved query is opened so it seeds the tab.
+          key={savedId ?? 'studio'}
+          databases={databases}
+          projects={projects ?? []}
+          environments={environments}
+          initialQuery={saved ? { databaseId: saved.database_id, sql: saved.sql, name: saved.name } : undefined}
         />
       )}
     </>

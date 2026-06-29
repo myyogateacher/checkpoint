@@ -11,6 +11,16 @@ databases — all behind Google sign-in with role-based access.
 > API contract the backend must implement is documented in
 > [`docs/features.md`](docs/features.md).
 
+## Screenshots
+
+| Projects | Migration review |
+| --- | --- |
+| ![Projects dashboard](docs/images/projects.jpg) | ![Migration detail with reviewers & comments](docs/images/migration.jpg) |
+
+| Schema browser | Query Studio (read panel) |
+| --- | --- |
+| ![Schema browser](docs/images/schema.jpg) | ![Query Studio with vertical result view](docs/images/query-studio.jpg) |
+
 ## Stack
 
 - **Frontend:** React 19, TypeScript, Tailwind CSS v4, React Router 7, Vite

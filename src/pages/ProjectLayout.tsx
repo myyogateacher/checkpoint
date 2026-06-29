@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useOutletContext, useParams } from 'react-router-dom'
-import { FaCodeBranch, FaDatabase } from 'react-icons/fa'
+import { FaCodeBranch, FaCog, FaDatabase } from 'react-icons/fa'
 import type { Project } from '../types'
 import { api } from '../services/api'
 import { PageHeader } from '../components/PageHeader'
@@ -16,6 +16,7 @@ export function useProject(): Project {
 const TABS = [
   { to: '', label: 'Databases', icon: <FaDatabase size={12} />, end: true },
   { to: 'migrations', label: 'Migrations', icon: <FaCodeBranch size={12} />, end: false },
+  { to: 'settings', label: 'Settings', icon: <FaCog size={12} />, end: false },
 ]
 
 export function ProjectLayout() {
@@ -42,7 +43,7 @@ export function ProjectLayout() {
         eyebrow="Project"
         title={project.name}
         description={project.description ?? undefined}
-        breadcrumbs={[{ label: 'Projects', to: '/' }, { label: project.name }]}
+        breadcrumbs={[{ label: 'Projects', to: '/projects' }, { label: project.name }]}
         actions={<TagList tags={project.tags} />}
       />
 

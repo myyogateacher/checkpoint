@@ -4,12 +4,14 @@ import {
   FaAngleDoubleLeft,
   FaAngleDoubleRight,
   FaBars,
+  FaBookmark,
   FaClipboardList,
   FaCodeBranch,
   FaCog,
   FaHome,
   FaMoon,
   FaPlay,
+  FaShieldAlt,
   FaSignOutAlt,
   FaSun,
   FaTimes,
@@ -20,6 +22,7 @@ import { useTheme } from '../context/ThemeContext'
 import { can } from '../lib/format'
 import { RoleBadge } from './badges'
 import { StructureTree } from './StructureTree'
+import { OrgSwitcher } from './OrgSwitcher'
 
 // Active highlight uses indigo tints that read clearly in both themes
 // (the plain bg-white surfaces are remapped to gray in dark mode).
@@ -45,7 +48,7 @@ function NavItem({
   return (
     <NavLink
       to={to}
-      end={to === '/'}
+      end={to === '/projects'}
       title={collapsed ? label : undefined}
       onClick={onNavigate}
       className={({ isActive }) =>
@@ -105,14 +108,24 @@ function SidebarContent({
         ) : null}
       </div>
 
+      {collapsed ? null : (
+        <div className="pb-3">
+          <OrgSwitcher />
+        </div>
+      )}
+
       <div className="space-y-1 border-y border-slate-200/60 py-3">
-        <NavItem to="/" icon={<FaHome size={14} />} label="Projects" collapsed={collapsed} onNavigate={onNavigate} />
+        <NavItem to="/projects" icon={<FaHome size={14} />} label="Projects" collapsed={collapsed} onNavigate={onNavigate} />
         <NavItem to="/query" icon={<FaPlay size={14} />} label="Query Studio" collapsed={collapsed} onNavigate={onNavigate} />
+        <NavItem to="/saved" icon={<FaBookmark size={14} />} label="Saved Queries" collapsed={collapsed} onNavigate={onNavigate} />
         <NavItem to="/migrations" icon={<FaCodeBranch size={14} />} label="Migrations" collapsed={collapsed} onNavigate={onNavigate} />
         {can(user?.role, 'manage_users') ? (
-          <NavItem to="/users" icon={<FaUsers size={14} />} label="Users" collapsed={collapsed} onNavigate={onNavigate} />
+          <NavItem to="/team" icon={<FaUsers size={14} />} label="Team" collapsed={collapsed} onNavigate={onNavigate} />
         ) : null}
-        <NavItem to="/audit" icon={<FaClipboardList size={14} />} label="Audit log" collapsed={collapsed} onNavigate={onNavigate} />
+        <NavItem to="/audit" icon={<FaClipboardList size={14} />} label="Audit Log" collapsed={collapsed} onNavigate={onNavigate} />
+        {can(user?.role, 'manage_users') ? (
+          <NavItem to="/validation-rules" icon={<FaShieldAlt size={14} />} label="Validation Rules" collapsed={collapsed} onNavigate={onNavigate} />
+        ) : null}
         {can(user?.role, 'manage_users') ? (
           <NavItem to="/settings" icon={<FaCog size={14} />} label="Settings" collapsed={collapsed} onNavigate={onNavigate} />
         ) : null}

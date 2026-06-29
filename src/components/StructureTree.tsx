@@ -4,12 +4,8 @@ import { FaChevronDown, FaChevronRight, FaDatabase, FaFolder, FaLayerGroup } fro
 import { api } from '../services/api'
 import type { Database, Environment, Project } from '../types'
 import { ENGINE_LABELS } from '../lib/format'
-
-const ENGINE_DOT: Record<string, string> = {
-  postgres: 'bg-sky-500',
-  mysql: 'bg-amber-500',
-  clickhouse: 'bg-yellow-500',
-}
+import { engineDot } from '../lib/engines'
+import { useOrg } from '../context/OrgContext'
 
 export function StructureTree({ onNavigate }: { onNavigate?: () => void }) {
   const [projects, setProjects] = useState<Project[]>([])
@@ -17,10 +13,14 @@ export function StructureTree({ onNavigate }: { onNavigate?: () => void }) {
   const [databases, setDatabases] = useState<Database[]>([])
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const location = useLocation()
+  const { currentOrgId } = useOrg()
 
   useEffect(() => {
     void (async () => {
-      const [projs, dbs] = await Promise.all([api.getProjects(), api.getDatabases()])
+      const [projs, dbs] = await Promise.all([
+        api.getProjects(currentOrgId ?? undefined),
+        api.getDatabases(undefined, currentOrgId ?? undefined),
+      ])
       setProjects(projs)
       setDatabases(dbs)
       const envLists = await Promise.all(projs.map((p) => api.getEnvironments(p.id)))
@@ -31,7 +31,7 @@ export function StructureTree({ onNavigate }: { onNavigate?: () => void }) {
       envLists.flat().forEach((e) => (initial[e.id] = true))
       setOpen(initial)
     })()
-  }, [])
+  }, [currentOrgId])
 
   const envsByProject = useMemo(() => {
     const map: Record<string, Environment[]> = {}
@@ -108,7 +108,7 @@ export function StructureTree({ onNavigate }: { onNavigate?: () => void }) {
                                 : 'text-slate-600 hover:bg-white/60'
                             }`}
                           >
-                            <span className={`h-2 w-2 rounded-full ${ENGINE_DOT[db.engine]}`} title={ENGINE_LABELS[db.engine]} />
+                            <span className={`h-2 w-2 rounded-full ${engineDot(db.engine)}`} title={ENGINE_LABELS[db.engine]} />
                             <FaDatabase size={11} className="text-slate-400" />
                             <span className="font-mono text-[13px]">{db.name}</span>
                           </NavLink>

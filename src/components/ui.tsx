@@ -130,7 +130,7 @@ export function Modal({
 export function ErrorBanner({ message }: { message: string | null }) {
   if (!message) return null
   return (
-    <div className="rounded-lg border border-rose-200/80 bg-rose-50/80 px-3 py-2 text-sm text-rose-700">
+    <div className="rounded-lg border border-rose-200/80 bg-rose-50/80 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/20 dark:text-rose-200">
       {message}
     </div>
   )
