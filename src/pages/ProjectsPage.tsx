@@ -32,24 +32,32 @@ export function ProjectsPage() {
     void api.getProjects(currentOrgId ?? undefined).then(setProjects)
   }, [currentOrgId])
 
-  function handleCreate() {
-    // Stub: optimistically add to the list. The real backend persists this.
-    const project: Project = {
-      id: `p_${Date.now()}`,
-      org_id: currentOrgId ?? 'org_primary',
-      name,
-      description: description || null,
-      tags: parseTags(tags),
-      created_at: new Date().toISOString(),
-      environment_count: 0,
-      database_count: 0,
+  const [saving, setSaving] = useState(false)
+
+  async function handleCreate() {
+    if (!currentOrgId) {
+      notify.error('Select an organization first.')
+      return
     }
-    setProjects((prev) => [...(prev ?? []), project])
-    setShowCreate(false)
-    setName('')
-    setDescription('')
-    setTags('')
-    notify.success(`Project “${project.name}” created`)
+    setSaving(true)
+    try {
+      const project = await api.createProject({
+        org_id: currentOrgId,
+        name: name.trim(),
+        description: description.trim() || null,
+        tags: parseTags(tags),
+      })
+      setProjects((prev) => [...(prev ?? []), project])
+      setShowCreate(false)
+      setName('')
+      setDescription('')
+      setTags('')
+      notify.success(`Project “${project.name}” created`)
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : 'Failed to create project.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -114,8 +122,8 @@ export function ProjectsPage() {
             <Button variant="secondary" onClick={() => setShowCreate(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreate} disabled={!name.trim()}>
-              Create project
+            <Button onClick={handleCreate} disabled={!name.trim() || saving}>
+              {saving ? 'Creating…' : 'Create project'}
             </Button>
           </>
         }

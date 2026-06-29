@@ -1,29 +1,50 @@
 services:
   checkpoint:
-    build: .
+    build:
+      context: .
+      # VITE_* are build-time only — Compose interpolates these from the .env
+      # file in this directory and bakes them into the client bundle.
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        VITE_ENABLE_PASSWORD_AUTH: ${VITE_ENABLE_PASSWORD_AUTH:-}
+        VITE_ORG: ${VITE_ORG:-}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     ports:
       - "3001:3001"
     environment:
-      - PORT=3001
-      - SESSION_SECRET=${SESSION_SECRET}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
-      - APP_DATABASE_URL=postgres://checkpoint:checkpoint@meta-db:5432/checkpoint
+      PORT: 3001
+      NODE_ENV: production
+      TZ: UTC
+      SESSION_SECRET: ${SESSION_SECRET}
+      # Key for encrypting stored connection/SMTP secrets (defaults to SESSION_SECRET).
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-${SESSION_SECRET}}
+      # Server verifies Google ID tokens against this client id.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      # Single-tenant lock (server-side mirror of the build-time VITE_ORG).
+      VITE_ORG: ${VITE_ORG:-}
+      # Metadata store — points at the bundled MySQL service.
+      APP_DATABASE_URL: mysql://checkpoint:checkpoint@db:3306/checkpoint
     depends_on:
-      - meta-db
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
-  # Checkpoint's own metadata store (projects, migrations, audit logs).
-  meta-db:
-    image: postgres:16-alpine
+  # Checkpoint's own metadata store (orgs, projects, migrations, audit logs).
+  db:
+    image: mysql:8
     environment:
-      - POSTGRES_USER=checkpoint
-      - POSTGRES_PASSWORD=checkpoint
-      - POSTGRES_DB=checkpoint
+      MYSQL_DATABASE: checkpoint
+      MYSQL_USER: checkpoint
+      MYSQL_PASSWORD: checkpoint
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
     volumes:
-      - checkpoint-meta:/var/lib/postgresql/data
+      - checkpoint-mysql:/var/lib/mysql
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
 volumes:
-  checkpoint-meta:
+  checkpoint-mysql:

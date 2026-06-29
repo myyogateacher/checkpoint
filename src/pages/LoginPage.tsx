@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { FaGoogle } from 'react-icons/fa'
 import { useAuth } from '../context/AuthContext'
 import { notify } from '../lib/toast'
 import { PASSWORD_AUTH_ENABLED } from '../lib/config'
-import { AuthShell, AuthDivider, authInputClass, GoogleButton, primaryBtnClass } from '../components/AuthShell'
+import { AuthShell, AuthDivider, authInputClass, primaryBtnClass } from '../components/AuthShell'
+import { GoogleSignInButton } from '../components/GoogleSignInButton'
 
 export function LoginPage() {
   const { signIn } = useAuth()
@@ -14,23 +14,19 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
 
-  async function submit(e: React.FormEvent) {
+  function submit(e: React.FormEvent) {
     e.preventDefault()
-    setBusy(true)
-    try {
-      // Mock: any credentials sign you in as the demo admin.
-      await signIn()
-      navigate('/')
-    } finally {
-      setBusy(false)
-    }
+    // The backend authenticates with Google only; there is no password endpoint.
+    notify.error('Email/password sign-in isn’t enabled. Continue with Google.')
   }
 
-  async function google() {
+  async function google(credential: string) {
     setBusy(true)
     try {
-      await signIn()
+      await signIn(credential)
       navigate('/')
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : 'Sign-in failed.')
     } finally {
       setBusy(false)
     }
@@ -118,7 +114,7 @@ export function LoginPage() {
         </>
       ) : null}
 
-      <GoogleButton onClick={google} disabled={busy} label="Continue with Google" icon={<FaGoogle />} />
+      <GoogleSignInButton onCredential={google} text="signin_with" />
 
       <p className="mt-6 text-center text-sm text-slate-500">
         Don't have an account?{' '}

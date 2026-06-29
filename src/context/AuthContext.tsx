@@ -5,7 +5,7 @@ import type { SessionUser } from '../types'
 interface AuthValue {
   user: SessionUser | null
   loading: boolean
-  signIn: () => Promise<void>
+  signIn: (googleCredential: string) => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -29,10 +29,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh()
   }, [refresh])
 
-  const signIn = useCallback(async () => {
-    // In a real deployment this is a redirect to Google; the stub signs in
-    // locally so the rest of the app is navigable.
-    const session = await api.mockSignIn()
+  const signIn = useCallback(async (googleCredential: string) => {
+    // The client gets a Google ID token from Google Identity Services and
+    // posts it; the server verifies it and establishes the session cookie.
+    const session = await api.googleSignIn(googleCredential)
     setUser(session.user)
   }, [])
 

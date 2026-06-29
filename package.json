@@ -12,11 +12,15 @@
     "start:server": "TZ=UTC bun server/index.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "typecheck:server": "tsc -p tsconfig.server.json",
     "lint": "eslint .",
     "preview": "vite preview",
     "screenshots": "node scripts/screenshots.mjs"
   },
   "dependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "google-auth-library": "^10.9.0",
+    "mysql2": "^3.22.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-hot-toast": "^2.6.0",
@@ -26,6 +30,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.0",
+    "@types/bun": "^1.3.14",
     "@types/node": "^24.4.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

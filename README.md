@@ -5,11 +5,14 @@ get them approved, apply them through a controlled write connection, and keep a
 full audit trail. Browse live schema and run read-only queries against your
 databases — all behind Google sign-in with role-based access.
 
-> **Status:** The **frontend is complete** and runs entirely against in-memory
-> mock data. The **backend is stubbed** — see [`server/index.ts`](server/index.ts)
-> and the `USE_MOCKS` flag in [`src/services/api.ts`](src/services/api.ts). The
-> API contract the backend must implement is documented in
-> [`docs/features.md`](docs/features.md).
+> **Status:** Full stack wired end-to-end. The **frontend** (React) talks
+> directly to the **backend** (Bun + TypeScript + MySQL) under
+> [`server/`](server) over `fetch` with a session cookie — there is no mock
+> layer. Sign-in uses **Google Identity Services**: the client renders the
+> Google button, gets an ID token, and posts it to `POST /api/auth/google`,
+> which the server verifies before creating the session. Set
+> `VITE_GOOGLE_CLIENT_ID` (client) and `GOOGLE_CLIENT_ID` (server) to the same
+> OAuth client.
 
 ## Screenshots
 
@@ -25,8 +28,8 @@ databases — all behind Google sign-in with role-based access.
 
 - **Frontend:** React 19, TypeScript, Tailwind CSS v4, React Router 7, Vite
 - **Notifications:** react-hot-toast (custom-themed)
-- **Backend:** Bun + (planned) Express-style HTTP, sessions, OAuth — currently stubbed
-- **Deployment:** Docker (multi-stage) + docker-compose
+- **Backend:** Bun + TypeScript, MySQL (`mysql2`), cookie sessions, Google ID-token verification (`google-auth-library`)
+- **Deployment:** Docker (multi-stage) + docker-compose (app + MySQL)
 
 ## Core concepts
 
@@ -80,10 +83,10 @@ bun run build
 bun run lint
 ```
 
-The mock API has a built-in admin session — click **Continue with Google** on
-the login screen to enter. Flip `USE_MOCKS` to `false` in
-[`src/services/api.ts`](src/services/api.ts) once the real backend is up; every
-`api.*` method already has the matching real route wired behind that flag.
+`bun run dev` starts the client (:3000) and the backend (:3001); the Vite dev
+server proxies `/api` to the backend. Sign-in needs a real Google OAuth client
+(`VITE_GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_ID`) and a running MySQL — the first
+Google account to sign in is bootstrapped as `admin`.
 
 ## Deploy
 
@@ -98,15 +101,41 @@ docker compose -f docker-compose.example.yml up --build
 src/
   types.ts              domain model (the API contract in TS)
   services/
-    api.ts              client; USE_MOCKS toggles mock vs. real fetch
-    mockData.ts         in-memory seed data
+    api.ts              client; fetch wrapper over the backend API
   context/              AuthContext, ThemeContext
   lib/                  format helpers, toast
   components/           Layout, StructureTree, Dropdown, ui primitives, …
   pages/                one file per screen
-server/index.ts         stub Bun server (serves SPA, /api → 501)
-docs/features.md        feature + data model + API spec for the backend
+server/
+  index.ts              entry: Bun.serve, route registration, SPA static serving
+  env.ts                env config (DB, session, Google, locked org)
+  db/                   MySQL pool, schema.sql, idempotent init
+  lib/                  http router, session, google verify, crypto, audit, auth
+  modules/              one file per domain (auth, projects, migrations, …)
+docs/features.md        feature + data model + API spec
 ```
+
+## Backend (Bun + MySQL)
+
+A structured server under [`server/`](server): a tiny path-param router, cookie
+sessions backed by a `sessions` table, **Google ID-token verification** (the
+client signs in with Google and POSTs the credential to `/api/auth/google`),
+RBAC enforced server-side, encrypted connection secrets, and an append-only
+audit log. The schema is applied idempotently on boot from
+[`server/db/schema.sql`](server/db/schema.sql).
+
+```bash
+# needs a MySQL 8 running and APP_DATABASE_URL (or DB_* / GOOGLE_CLIENT_ID) set
+bun run dev:server      # API + SPA on :3001 (watch mode)
+bun run typecheck:server
+```
+
+Schema introspection, read queries, and migration apply connect to the managed
+(external) databases — implemented today for **MySQL-family** engines via
+`mysql2`; other engines return `501` until their drivers are added.
+
+> **First sign-in** bootstraps an admin (the first Google account). After that,
+> users must be invited. With `VITE_ORG` set, everyone joins that single org.
 
 ## Related docs
 
