@@ -421,7 +421,7 @@ function cellText(value: unknown): string {
 
 function TableView({ result }: { result: QueryResult }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200/60">
+    <div className="max-h-[55vh] overflow-auto rounded-xl border border-slate-200/60">
       <table className="w-full text-sm">
         <thead className="bg-white/50 text-left text-xs uppercase tracking-wide text-slate-500">
           <tr>
@@ -454,7 +454,7 @@ function VerticalView({ result }: { result: QueryResult }) {
   const separatorWidth = 27
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-[13px] leading-relaxed shadow-inner">
+    <div className="max-h-[55vh] overflow-auto rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-[13px] leading-relaxed shadow-inner">
       <div className="text-slate-400">
         mysql&gt; <span className="text-slate-200">SELECT ...\G</span>
       </div>

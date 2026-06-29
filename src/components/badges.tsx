@@ -16,12 +16,14 @@ export function StatusBadge({ status }: { status: MigrationStatus }) {
 }
 
 const CONN_STYLES = {
-  read: 'border-emerald-200/70 bg-emerald-50/80 text-emerald-700',
-  write: 'border-rose-200/70 bg-rose-50/80 text-rose-700',
+  read: 'border-emerald-200/70 bg-emerald-50/80 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/25 dark:text-emerald-200',
+  write: 'border-rose-200/70 bg-rose-50/80 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/25 dark:text-rose-200',
 }
 
+const CONN_LABELS = { read: 'Read', write: 'Write' }
+
 export function ConnectionBadge({ mode }: { mode: 'read' | 'write' }) {
-  return <Badge className={CONN_STYLES[mode]}>{mode === 'read' ? 'read' : 'write'}</Badge>
+  return <Badge className={CONN_STYLES[mode]}>{CONN_LABELS[mode]}</Badge>
 }
 
 export function TagList({ tags, className = '' }: { tags: string[]; className?: string }) {
