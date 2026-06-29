@@ -6,6 +6,9 @@ import { ENGINE_OPTIONS, engineDefaultPort } from '../lib/engines'
 import { Button, ErrorBanner, Field, Modal, TextInput } from './ui'
 import { Dropdown } from './Dropdown'
 
+// Sentinel dropdown value that switches the Environment field into "create new" mode.
+const NEW_ENV = '__new_env__'
+
 function emptyConn(port: number, username: string): ConnectionInput {
   return { host: '', port, username, database: '', ssl: true, password: '' }
 }
@@ -24,6 +27,11 @@ export function AddDatabaseModal({
   onCreated: (db: Database) => void
 }) {
   const [environmentId, setEnvironmentId] = useState(defaultEnvironmentId ?? environments[0]?.id ?? '')
+  const [newEnvName, setNewEnvName] = useState('')
+  // When there are no environments we always show the create input; otherwise the
+  // user can opt into creating a new one via the dropdown's "+ Create new" option.
+  const [creatingEnv, setCreatingEnv] = useState(environments.length === 0)
+  const showNewEnvInput = creatingEnv
   const [name, setName] = useState('')
   const [engine, setEngine] = useState<DatabaseEngine>('postgres')
   const [tags, setTags] = useState('')
@@ -42,12 +50,12 @@ export function AddDatabaseModal({
   const canSubmit = useMemo(
     () =>
       name.trim() &&
-      environmentId &&
+      (showNewEnvInput ? newEnvName.trim() : environmentId) &&
       read.host.trim() &&
       read.database.trim() &&
       write.host.trim() &&
       write.database.trim(),
-    [name, environmentId, read, write],
+    [name, environmentId, showNewEnvInput, newEnvName, read, write],
   )
 
   async function submit() {
@@ -55,9 +63,14 @@ export function AddDatabaseModal({
     if (!canSubmit) return setError('Name, environment, and both read & write connection host/database are required.')
     setSaving(true)
     try {
+      let envId = environmentId
+      if (showNewEnvInput) {
+        const env = await api.createEnvironment(projectId, { name: newEnvName.trim() })
+        envId = env.id
+      }
       const db = await api.createDatabase({
         project_id: projectId,
-        environment_id: environmentId,
+        environment_id: envId,
         name: name.trim(),
         engine,
         tags: tags.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean),
@@ -93,12 +106,37 @@ export function AddDatabaseModal({
       }
     >
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Environment">
-          <Dropdown
-            value={environmentId}
-            options={environments.map((env) => ({ value: env.id, label: env.name }))}
-            onChange={setEnvironmentId}
-          />
+        <Field label="Environment" hint={showNewEnvInput ? 'A new environment will be created' : undefined}>
+          {showNewEnvInput ? (
+            <div className="flex items-center gap-2">
+              <TextInput
+                value={newEnvName}
+                onChange={(e) => setNewEnvName(e.target.value)}
+                placeholder="production"
+              />
+              {environments.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreatingEnv(false)
+                    setNewEnvName('')
+                  }}
+                  className="shrink-0 text-xs font-medium text-slate-500 hover:text-slate-700"
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <Dropdown
+              value={environmentId}
+              options={[
+                ...environments.map((env) => ({ value: env.id, label: env.name })),
+                { value: NEW_ENV, label: '+ Create new environment' },
+              ]}
+              onChange={(v) => (v === NEW_ENV ? setCreatingEnv(true) : setEnvironmentId(v))}
+            />
+          )}
         </Field>
         <Field label="Engine">
           <Dropdown

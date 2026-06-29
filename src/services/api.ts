@@ -107,6 +107,12 @@ export const api = {
   getAllEnvironments(): Promise<Environment[]> {
     return request<Environment[]>('/api/environments')
   },
+  createEnvironment(projectId: string, input: { name: string; color?: string }): Promise<Environment> {
+    return request<Environment>(`/api/projects/${projectId}/environments`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
   getDatabases(projectId?: string, orgId?: string): Promise<Database[]> {
     const params = new URLSearchParams()
     if (projectId) params.set('project', projectId)

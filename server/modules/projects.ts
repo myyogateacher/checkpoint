@@ -98,6 +98,23 @@ export function registerProjects(router: Router) {
     return json(withCounts)
   })
 
+  // Create an environment within a project.
+  router.post('/api/projects/:id/environments', async (ctx: Ctx) => {
+    const user = requireCapability(ctx, 'edit')
+    const project = await loadProject(user.id, ctx.params.id)
+    const body = await readJson<{ name?: string; color?: string }>(ctx.req)
+    if (!body.name?.trim()) throw badRequest('name is required.')
+    const id = newId('env')
+    await execute('INSERT INTO environments (id, project_id, name, color) VALUES (:id, :p, :name, :color)', {
+      id,
+      p: project.id,
+      name: body.name.trim(),
+      color: body.color?.trim() || 'emerald',
+    })
+    await writeAudit({ actor: user, orgId: project.org_id, action: 'environment.create', entityType: 'project', entityId: project.id, entityLabel: project.name, summary: `Created environment ${body.name.trim()} in ${project.name}` })
+    return json({ id, project_id: project.id, name: body.name.trim(), color: body.color?.trim() || 'emerald', database_count: 0 })
+  })
+
   // Per-project governance (approvers / releasers / required approvals).
   router.get('/api/projects/:id/settings', async (ctx: Ctx) => {
     const user = requireUser(ctx)

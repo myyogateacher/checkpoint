@@ -40,7 +40,7 @@ export async function introspect(engine: string, c: ConnectionSecret) {
   const conn = await connect(c)
   try {
     const [tables] = await conn.query<mysql.RowDataPacket[]>(
-      `SELECT TABLE_NAME AS name, TABLE_ROWS AS rows FROM information_schema.TABLES
+      `SELECT TABLE_NAME AS name, TABLE_ROWS AS \`rows\` FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`,
       [c.database],
     )
