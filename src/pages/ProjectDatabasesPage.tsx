@@ -11,9 +11,9 @@ import { Button, Card, Spinner } from '../components/ui'
 import { useProject } from './ProjectLayout'
 
 const ENV_ACCENT: Record<string, string> = {
-  rose: 'border-rose-200/70 bg-rose-50/60 text-rose-700',
-  amber: 'border-amber-200/70 bg-amber-50/60 text-amber-700',
-  emerald: 'border-emerald-200/70 bg-emerald-50/60 text-emerald-700',
+  rose: 'border-rose-200/70 bg-rose-50/60 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/25 dark:text-rose-200',
+  amber: 'border-amber-200/70 bg-amber-50/60 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/25 dark:text-amber-200',
+  emerald: 'border-emerald-200/70 bg-emerald-50/60 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/25 dark:text-emerald-200',
 }
 
 export function ProjectDatabasesPage() {

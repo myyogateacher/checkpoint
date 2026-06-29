@@ -2,9 +2,7 @@ import { type Router, type Ctx, json, readJson, badRequest } from '../lib/http'
 import { requireUser } from '../lib/auth'
 import { writeAudit } from '../lib/audit'
 import { loadDb, getConnectionSecret } from './databases.repo'
-import { runReadQuery } from '../lib/externalDb'
-
-const READ_ONLY = /^\s*(select|show|with|explain)\b/i
+import { runReadQuery, assertReadOnly } from '../lib/externalDb'
 
 export function registerQuery(router: Router) {
   // Run a read-only query against the database's read connection.
@@ -13,9 +11,8 @@ export function registerQuery(router: Router) {
     const db = await loadDb(user.id, ctx.params.id)
     const { sql } = await readJson<{ sql: string; timeout_seconds?: number }>(ctx.req)
     if (!sql?.trim()) throw badRequest('Empty query.')
-    // Defense in depth: only read statements, single statement.
-    if (!READ_ONLY.test(sql)) throw badRequest('Only read-only queries (SELECT / SHOW / WITH / EXPLAIN) are allowed.')
-    if (sql.replace(/;\s*$/, '').includes(';')) throw badRequest('Only a single statement is allowed.')
+    // Defense in depth: engine-aware read-only validation before connecting.
+    assertReadOnly(db.engine, sql)
 
     const conn = await getConnectionSecret(db.id, 'read')
     if (!conn) throw badRequest('No read connection configured.')

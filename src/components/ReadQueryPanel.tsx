@@ -85,6 +85,9 @@ export function ReadQueryPanel({
   const [querySettings, setQuerySettings] = useState<AppSettings['query'] | null>(null)
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0]
   const activeDb = databases.find((d) => d.id === active.databaseId)
+  // SQL engines have a sql-formatter dialect; schema-less stores (Redis) don't,
+  // which gates the schema explorer, the editor placeholder, and the hint copy.
+  const isSqlEngine = activeDb ? engineDialect(activeDb.engine) !== null : true
 
   useEffect(() => {
     void api.getSettings().then((s) => setQuerySettings(s.query))
@@ -161,7 +164,13 @@ export function ReadQueryPanel({
         <div className="relative hidden w-60 shrink-0 border-r border-slate-200/60 bg-white/20 md:block">
           <div className="absolute inset-0">
             {activeDb ? (
-              <SchemaExplorer database={activeDb} onInsert={insertIdentifier} />
+              isSqlEngine ? (
+                <SchemaExplorer database={activeDb} onInsert={insertIdentifier} />
+              ) : (
+                <div className="flex h-full items-center justify-center p-4 text-center text-xs text-slate-400">
+                  Schema browsing isn't available for {ENGINE_LABELS[activeDb.engine]}.
+                </div>
+              )
             ) : (
               <div className="flex h-full items-center justify-center p-4 text-center text-xs text-slate-400">
                 Select a database to explore its tables.
@@ -293,8 +302,10 @@ export function ReadQueryPanel({
                     <ConnectionBadge mode="read" />
                   </div>
                   <p className="text-xs text-slate-500">
-                    Read-only — runs on <span className="font-mono">{activeDb.read_connection.host}</span>. Only
-                    SELECT / SHOW / WITH / EXPLAIN are permitted.
+                    Read-only — runs on <span className="font-mono">{activeDb.read_connection.host}</span>.{' '}
+                    {isSqlEngine
+                      ? 'Only SELECT / SHOW / WITH / EXPLAIN are permitted.'
+                      : 'Only read-only Redis commands (GET, HGETALL, LRANGE…) are permitted.'}
                     {querySettings ? ` Timeout ${querySettings.default_timeout_seconds}s.` : ''}
                   </p>
                 </div>
@@ -304,7 +315,7 @@ export function ReadQueryPanel({
                   value={active.sql}
                   onChange={(e) => patch(active.id, { sql: e.target.value })}
                   spellCheck={false}
-                  placeholder="SELECT ..."
+                  placeholder={isSqlEngine ? 'SELECT ...' : 'GET mykey'}
                 />
 
                 <div className="flex flex-wrap items-center justify-between gap-2">

@@ -157,6 +157,16 @@ export function registerMigrations(router: Router) {
         }
         await execute('UPDATE migrations SET status = :s, applied_at = NOW() WHERE id = :id', { s: 'applied', id: mig.id })
       } else if (action === 'approve') {
+        // The author may only approve their own migration when the project allows it.
+        if (user.email === mig.author_email) {
+          const ps = await queryOne<{ allow_self_approval: number }>(
+            `SELECT ps.allow_self_approval FROM \`databases\` d
+               JOIN project_settings ps ON ps.project_id = d.project_id
+              WHERE d.id = :dbid`,
+            { dbid: mig.database_id },
+          )
+          if (!ps?.allow_self_approval) throw badRequest('You cannot approve your own migration. Ask another approver, or enable self-approval in project settings.')
+        }
         await execute('UPDATE migrations SET status = :s, approved_by = :by, approved_at = NOW() WHERE id = :id', { s: 'approved', by: user.email, id: mig.id })
       } else {
         await execute('UPDATE migrations SET status = :s WHERE id = :id', { s: NEXT_STATUS[action], id: mig.id })

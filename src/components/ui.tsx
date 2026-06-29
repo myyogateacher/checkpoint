@@ -24,7 +24,8 @@ const VARIANT_STYLES: Record<NonNullable<ButtonProps['variant']>, string> = {
     'border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-[0_8px_24px_rgba(37,99,235,0.28)] hover:from-blue-500 hover:to-indigo-500',
   secondary: 'border border-white/60 bg-white/60 text-slate-700 hover:bg-white/80',
   ghost: 'border border-transparent text-slate-600 hover:bg-white/60',
-  danger: 'border border-rose-300/60 bg-rose-50/80 text-rose-700 hover:bg-rose-100/80',
+  danger:
+    'border border-rose-300/60 bg-rose-50/80 text-rose-700 hover:bg-rose-100/80 dark:border-rose-400/40 dark:bg-rose-500/25 dark:text-rose-200 dark:hover:bg-rose-500/35',
 }
 
 export function Button({ variant = 'primary', loading, className = '', children, disabled, ...rest }: ButtonProps) {

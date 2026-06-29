@@ -27,6 +27,11 @@ export const env = {
   // Falls back to the request origin when unset.
   appBaseUrl: (process.env.APP_BASE_URL ?? '').replace(/\/$/, ''),
 
+  // When the frontend is served from a different site than the API (e.g. localhost
+  // frontend → ngrok/HTTPS backend), the session cookie must be SameSite=None; Secure
+  // for the browser to store and send it. Requires HTTPS on both ends.
+  crossSiteCookies: process.env.CROSS_SITE_COOKIES === 'true',
+
   // Browser origins allowed to call the API with credentials (comma-separated).
   // When empty in development, any localhost/127.0.0.1 origin is allowed.
   corsOrigins: (process.env.CORS_ORIGINS ?? '')

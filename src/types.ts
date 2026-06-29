@@ -85,6 +85,8 @@ export interface ProjectSettings {
   releasers: string[]
   // How many distinct approvals a migration needs before it can be released.
   required_approvals: number
+  // When true, a migration's author may approve their own migration.
+  allow_self_approval: boolean
 }
 
 export interface Environment {

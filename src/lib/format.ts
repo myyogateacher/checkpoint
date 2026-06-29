@@ -41,13 +41,13 @@ export const ROLE_STYLES: Record<UserRole, string> = {
 }
 
 export const STATUS_META: Record<MigrationStatus, { label: string; style: string }> = {
-  draft: { label: 'Draft', style: 'border-slate-200/70 bg-slate-50/80 text-slate-600' },
-  pending_approval: { label: 'Pending approval', style: 'border-amber-200/70 bg-amber-50/80 text-amber-700' },
-  approved: { label: 'Approved', style: 'border-sky-200/70 bg-sky-50/80 text-sky-700' },
-  rejected: { label: 'Rejected', style: 'border-rose-200/70 bg-rose-50/80 text-rose-700' },
-  running: { label: 'Running', style: 'border-blue-200/70 bg-blue-50/80 text-blue-700' },
-  applied: { label: 'Applied', style: 'border-emerald-200/70 bg-emerald-50/80 text-emerald-700' },
-  failed: { label: 'Failed', style: 'border-rose-200/70 bg-rose-50/80 text-rose-700' },
+  draft: { label: 'Draft', style: 'border-slate-200/70 bg-slate-50/80 text-slate-600 dark:border-slate-500/40 dark:bg-slate-600/30 dark:text-slate-200' },
+  pending_approval: { label: 'Pending approval', style: 'border-amber-200/70 bg-amber-50/80 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/25 dark:text-amber-200' },
+  approved: { label: 'Approved', style: 'border-sky-200/70 bg-sky-50/80 text-sky-700 dark:border-sky-400/40 dark:bg-sky-500/25 dark:text-sky-200' },
+  rejected: { label: 'Rejected', style: 'border-rose-200/70 bg-rose-50/80 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/25 dark:text-rose-200' },
+  running: { label: 'Running', style: 'border-blue-200/70 bg-blue-50/80 text-blue-700 dark:border-blue-400/40 dark:bg-blue-500/25 dark:text-blue-200' },
+  applied: { label: 'Applied', style: 'border-emerald-200/70 bg-emerald-50/80 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/25 dark:text-emerald-200' },
+  failed: { label: 'Failed', style: 'border-rose-200/70 bg-rose-50/80 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/25 dark:text-rose-200' },
 }
 
 // --- Audit log categorisation ----------------------------------------------

@@ -56,9 +56,16 @@ export function parseCookies(req: Request): Record<string, string> {
   return out
 }
 
-export function cookieHeader(name: string, value: string, opts: { maxAge?: number; secure?: boolean } = {}): string {
-  const bits = [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Lax']
-  if (opts.secure) bits.push('Secure')
+export function cookieHeader(
+  name: string,
+  value: string,
+  opts: { maxAge?: number; secure?: boolean; sameSite?: 'Lax' | 'None' | 'Strict' } = {},
+): string {
+  const sameSite = opts.sameSite ?? 'Lax'
+  // SameSite=None is only honored on Secure cookies, so force Secure when used.
+  const secure = opts.secure || sameSite === 'None'
+  const bits = [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', `SameSite=${sameSite}`]
+  if (secure) bits.push('Secure')
   if (opts.maxAge !== undefined) bits.push(`Max-Age=${opts.maxAge}`)
   return bits.join('; ')
 }

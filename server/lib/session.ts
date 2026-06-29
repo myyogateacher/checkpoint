@@ -23,11 +23,14 @@ export async function createSession(userId: string): Promise<string> {
   return `${id}.${sign(id)}`
 }
 
+const COOKIE_SAME_SITE = env.crossSiteCookies ? 'None' : 'Lax'
+const COOKIE_SECURE = env.isProd || env.crossSiteCookies
+
 export function sessionCookie(token: string): string {
-  return cookieHeader(COOKIE, token, { maxAge: env.sessionTtlDays * 86400, secure: env.isProd })
+  return cookieHeader(COOKIE, token, { maxAge: env.sessionTtlDays * 86400, secure: COOKIE_SECURE, sameSite: COOKIE_SAME_SITE })
 }
 export function clearCookie(): string {
-  return cookieHeader(COOKIE, '', { maxAge: 0, secure: env.isProd })
+  return cookieHeader(COOKIE, '', { maxAge: 0, secure: COOKIE_SECURE, sameSite: COOKIE_SAME_SITE })
 }
 
 function readToken(req: Request): string | null {

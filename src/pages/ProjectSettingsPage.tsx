@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FaCheckDouble, FaRocket, FaUserCheck } from 'react-icons/fa'
+import { FaCheckDouble, FaRocket, FaUserCheck, FaUserShield } from 'react-icons/fa'
 import { api } from '../services/api'
 import type { ManagedUser, ProjectSettings } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -9,6 +9,24 @@ import { Button, Card, Field, Spinner } from '../components/ui'
 import { Dropdown } from '../components/Dropdown'
 import { UserMultiSelect } from '../components/UserMultiSelect'
 import { useProject } from './ProjectLayout'
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition ${
+        checked ? 'bg-gradient-to-r from-blue-600 to-indigo-600' : 'bg-slate-300 dark:bg-slate-600'
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? 'left-4' : 'left-0.5'}`}
+      />
+    </button>
+  )
+}
 
 export function ProjectSettingsPage() {
   const project = useProject()
@@ -123,6 +141,27 @@ export function ProjectSettingsPage() {
             <p className="text-sm font-medium text-slate-800">{settings.required_approvals}</p>
           )}
         </Field>
+      </Card>
+
+      <Card className="p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <FaUserShield className="text-amber-500" />
+          <h2 className="text-sm font-semibold text-slate-800">Self-approval</h2>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-slate-500">
+            Allow the user who created a migration to approve it themselves. When off, an author's migration
+            must be approved by someone else.
+          </p>
+          {editable ? (
+            <Toggle
+              checked={settings.allow_self_approval}
+              onChange={(allow_self_approval) => setSettings((s) => (s ? { ...s, allow_self_approval } : s))}
+            />
+          ) : (
+            <p className="text-sm font-medium text-slate-800">{settings.allow_self_approval ? 'On' : 'Off'}</p>
+          )}
+        </div>
       </Card>
     </div>
   )

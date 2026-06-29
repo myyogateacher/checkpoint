@@ -119,26 +119,26 @@ export function registerProjects(router: Router) {
   router.get('/api/projects/:id/settings', async (ctx: Ctx) => {
     const user = requireUser(ctx)
     await loadProject(user.id, ctx.params.id)
-    const row = await queryOne<{ approvers: unknown; releasers: unknown; required_approvals: number }>(
-      'SELECT approvers, releasers, required_approvals FROM project_settings WHERE project_id = :id',
+    const row = await queryOne<{ approvers: unknown; releasers: unknown; required_approvals: number; allow_self_approval: number }>(
+      'SELECT approvers, releasers, required_approvals, allow_self_approval FROM project_settings WHERE project_id = :id',
       { id: ctx.params.id },
     )
     return json(
       row
-        ? { approvers: asJson<string[]>(row.approvers, []), releasers: asJson<string[]>(row.releasers, []), required_approvals: Number(row.required_approvals) }
-        : { approvers: [], releasers: [], required_approvals: 1 },
+        ? { approvers: asJson<string[]>(row.approvers, []), releasers: asJson<string[]>(row.releasers, []), required_approvals: Number(row.required_approvals), allow_self_approval: !!row.allow_self_approval }
+        : { approvers: [], releasers: [], required_approvals: 1, allow_self_approval: false },
     )
   })
 
   router.put('/api/projects/:id/settings', async (ctx: Ctx) => {
     const user = requireCapability(ctx, 'manage_users')
     const project = await loadProject(user.id, ctx.params.id)
-    const body = await readJson<{ approvers: string[]; releasers: string[]; required_approvals: number }>(ctx.req)
+    const body = await readJson<{ approvers: string[]; releasers: string[]; required_approvals: number; allow_self_approval: boolean }>(ctx.req)
     await execute(
-      `INSERT INTO project_settings (project_id, approvers, releasers, required_approvals)
-       VALUES (:id, :approvers, :releasers, :req)
-       ON DUPLICATE KEY UPDATE approvers = :approvers, releasers = :releasers, required_approvals = :req`,
-      { id: ctx.params.id, approvers: JSON.stringify(body.approvers ?? []), releasers: JSON.stringify(body.releasers ?? []), req: body.required_approvals ?? 1 },
+      `INSERT INTO project_settings (project_id, approvers, releasers, required_approvals, allow_self_approval)
+       VALUES (:id, :approvers, :releasers, :req, :selfApprove)
+       ON DUPLICATE KEY UPDATE approvers = :approvers, releasers = :releasers, required_approvals = :req, allow_self_approval = :selfApprove`,
+      { id: ctx.params.id, approvers: JSON.stringify(body.approvers ?? []), releasers: JSON.stringify(body.releasers ?? []), req: body.required_approvals ?? 1, selfApprove: body.allow_self_approval ? 1 : 0 },
     )
     await writeAudit({ actor: user, orgId: project.org_id, action: 'project.settings', entityType: 'project', entityId: project.id, entityLabel: project.name, summary: `Updated migration governance for ${project.name}` })
     return json(body)

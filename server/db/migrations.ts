@@ -186,10 +186,11 @@ export const SCHEMA_STATEMENTS: string[] = [
    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
   `CREATE TABLE IF NOT EXISTS project_settings (
-     project_id         VARCHAR(40) PRIMARY KEY,
-     approvers          JSON NOT NULL,
-     releasers          JSON NOT NULL,
-     required_approvals INT NOT NULL DEFAULT 1,
+     project_id          VARCHAR(40) PRIMARY KEY,
+     approvers           JSON NOT NULL,
+     releasers           JSON NOT NULL,
+     required_approvals  INT NOT NULL DEFAULT 1,
+     allow_self_approval TINYINT(1) NOT NULL DEFAULT 0,
      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
@@ -228,4 +229,5 @@ export const SCHEMA_STATEMENTS: string[] = [
 // (MySQL has no `ADD COLUMN IF NOT EXISTS`). Applied after the CREATE statements.
 export const COLUMN_MIGRATIONS: { table: string; column: string; alter: string }[] = [
   { table: 'users', column: 'password_hash', alter: 'ADD COLUMN password_hash TEXT NULL' },
+  { table: 'project_settings', column: 'allow_self_approval', alter: 'ADD COLUMN allow_self_approval TINYINT(1) NOT NULL DEFAULT 0' },
 ]
