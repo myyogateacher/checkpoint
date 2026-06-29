@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Eyebrow } from './ui'
 import { Breadcrumbs, type Crumb } from './Breadcrumbs'
+import { useOrg } from '../context/OrgContext'
 
 export function PageHeader({
   eyebrow,
@@ -15,9 +16,17 @@ export function PageHeader({
   actions?: ReactNode
   breadcrumbs?: Crumb[]
 }) {
+  const { currentOrg } = useOrg()
+
+  // Every page shows "Org > …": the org leads, then either the page-specific
+  // trail or, by default, the page title.
+  const trail: Crumb[] = []
+  if (currentOrg) trail.push({ label: currentOrg.name, to: '/projects' })
+  trail.push(...(breadcrumbs ?? [{ label: title }]))
+
   return (
     <div className="mb-6">
-      {breadcrumbs ? <Breadcrumbs items={breadcrumbs} /> : null}
+      <Breadcrumbs items={trail} />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FaEnvelope, FaSlack } from 'react-icons/fa'
+import { FaEnvelope, FaPlay, FaSlack } from 'react-icons/fa'
 import { api } from '../services/api'
 import type { AppSettings } from '../types'
 import { notify } from '../lib/toast'
@@ -31,7 +31,7 @@ export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [emailPassword, setEmailPassword] = useState('')
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'email' | 'slack'>('email')
+  const [tab, setTab] = useState<'email' | 'slack' | 'query'>('email')
 
   useEffect(() => {
     void api.getSettings().then(setSettings)
@@ -83,6 +83,7 @@ export function SettingsPage() {
         {([
           { key: 'email', label: 'Email', icon: <FaEnvelope size={12} /> },
           { key: 'slack', label: 'Slack', icon: <FaSlack size={12} /> },
+          { key: 'query', label: 'Query', icon: <FaPlay size={12} /> },
         ] as const).map((t) => (
           <button
             key={t.key}
@@ -157,7 +158,7 @@ export function SettingsPage() {
             </div>
           </div>
         </Card>
-      ) : (
+      ) : tab === 'slack' ? (
         <Card className="max-w-2xl p-5">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -172,18 +173,19 @@ export function SettingsPage() {
           </div>
 
           <div className={`space-y-3 ${slack.enabled ? '' : 'pointer-events-none opacity-50'}`}>
-            <Field label="Incoming webhook URL">
+            <Field label="Notification token" hint="Bot token (xoxb-…) used to post rich messages via the Slack API.">
               <TextInput
-                value={slack.webhook_url}
-                onChange={(e) => setSettings({ ...settings, slack: { ...slack, webhook_url: e.target.value } })}
-                placeholder="https://hooks.slack.com/services/…"
+                type="password"
+                value={slack.notification_token}
+                onChange={(e) => setSettings({ ...settings, slack: { ...slack, notification_token: e.target.value } })}
+                placeholder="xoxb-…"
               />
             </Field>
-            <Field label="Channel">
+            <Field label="Channel ID" hint="e.g. C012AB3CD — the target channel's ID, not its name.">
               <TextInput
-                value={slack.channel}
-                onChange={(e) => setSettings({ ...settings, slack: { ...slack, channel: e.target.value } })}
-                placeholder="#db-migrations"
+                value={slack.channel_id}
+                onChange={(e) => setSettings({ ...settings, slack: { ...slack, channel_id: e.target.value } })}
+                placeholder="C012AB3CD"
               />
             </Field>
             <div className="border-t border-slate-200/60 pt-2">
@@ -204,6 +206,37 @@ export function SettingsPage() {
                 label="Migration applied"
               />
             </div>
+          </div>
+        </Card>
+      ) : (
+        <Card className="max-w-2xl p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <FaPlay className="text-indigo-500" />
+            <h2 className="text-sm font-semibold text-slate-800">Read queries</h2>
+          </div>
+          <div className="space-y-4">
+            <Field
+              label="Default query timeout (seconds)"
+              hint="Applied as a statement timeout to every query run from the read panel."
+            >
+              <TextInput
+                type="number"
+                min={1}
+                value={settings.query.default_timeout_seconds}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    query: { ...settings.query, default_timeout_seconds: Number(e.target.value) },
+                  })
+                }
+                className="max-w-40"
+              />
+            </Field>
+            <Toggle
+              checked={settings.query.format_on_run}
+              onChange={(v) => setSettings({ ...settings, query: { ...settings.query, format_on_run: v } })}
+              label="Auto-format SQL when a query is run"
+            />
           </div>
         </Card>
       )}

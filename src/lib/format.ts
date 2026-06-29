@@ -1,4 +1,4 @@
-import type { DatabaseEngine, MigrationStatus, UserRole } from '../types'
+import type { MigrationStatus, UserRole } from '../types'
 
 export function formatDate(iso: string | null): string {
   if (!iso) return '—'
@@ -31,18 +31,8 @@ export function formatRows(n: number): string {
   return String(n)
 }
 
-export const ENGINE_LABELS: Record<DatabaseEngine, string> = {
-  postgres: 'PostgreSQL',
-  mysql: 'MySQL',
-  clickhouse: 'ClickHouse',
-}
-
-// Tailwind class fragments per engine, used for badges.
-export const ENGINE_STYLES: Record<DatabaseEngine, string> = {
-  postgres: 'border-sky-200/70 bg-sky-50/80 text-sky-700',
-  mysql: 'border-amber-200/70 bg-amber-50/80 text-amber-700',
-  clickhouse: 'border-yellow-300/70 bg-yellow-50/80 text-yellow-700',
-}
+// Engine labels/styles live in the engine registry; re-exported for compatibility.
+export { ENGINE_LABELS, ENGINE_STYLES } from './engines'
 
 export const ROLE_STYLES: Record<UserRole, string> = {
   admin: 'border-indigo-200/70 bg-indigo-50/80 text-indigo-700',

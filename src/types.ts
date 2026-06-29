@@ -3,7 +3,35 @@
 // Hierarchy: Project > Environment > Database.
 // ---------------------------------------------------------------------------
 
-export type DatabaseEngine = 'postgres' | 'mysql' | 'clickhouse'
+export type DatabaseEngine =
+  // Relational (PostgreSQL family)
+  | 'postgres'
+  | 'aurora_postgres'
+  | 'alloydb'
+  // Relational (MySQL family)
+  | 'mysql'
+  | 'aurora_mysql'
+  | 'mariadb'
+  | 'tidb'
+  // Relational (other)
+  | 'oracle'
+  | 'sqlserver'
+  // Analytics / warehouse
+  | 'clickhouse'
+  | 'snowflake'
+  | 'bigquery'
+  | 'redshift'
+  | 'hive'
+  | 'databricks'
+  | 'starrocks'
+  | 'elasticsearch'
+  // NoSQL
+  | 'mongodb'
+  | 'redis'
+  | 'cassandra'
+  | 'documentdb'
+  | 'dynamodb'
+  | 'cosmosdb'
 
 export type UserRole = 'admin' | 'editor' | 'viewer'
 
@@ -31,14 +59,32 @@ export interface SessionState {
   user: SessionUser | null
 }
 
+export interface Organization {
+  id: string
+  name: string
+  slug: string
+  created_at: string
+}
+
 export interface Project {
   id: string
+  org_id: string
   name: string
   description: string | null
   tags: string[]
   created_at: string
   environment_count: number
   database_count: number
+}
+
+// Per-project migration governance.
+export interface ProjectSettings {
+  // Users (by email) allowed to approve migrations in this project.
+  approvers: string[]
+  // Users allowed to apply/release approved migrations to the database.
+  releasers: string[]
+  // How many distinct approvals a migration needs before it can be released.
+  required_approvals: number
 }
 
 export interface Environment {
@@ -174,6 +220,23 @@ export interface QueryResult {
   duration_ms: number
 }
 
+// --- Saved queries ----------------------------------------------------------
+
+export interface SavedQuery {
+  id: string
+  name: string
+  description: string | null
+  tags: string[]
+  database_id: string
+  database_name: string
+  engine: DatabaseEngine
+  sql: string
+  // Whether a shareable link has been generated for this query.
+  shared: boolean
+  author_email: string
+  created_at: string
+}
+
 // --- Users & audit ----------------------------------------------------------
 
 export interface ManagedUser {
@@ -199,11 +262,18 @@ export interface AppSettings {
   }
   slack: {
     enabled: boolean
-    webhook_url: string
-    channel: string
+    // Bot/notification token (e.g. xoxb-…) — enables rich messages vs. a webhook.
+    notification_token: string
+    channel_id: string
     notify_on_submit: boolean
     notify_on_approve: boolean
     notify_on_apply: boolean
+  }
+  query: {
+    // Statement timeout applied to every read-panel query.
+    default_timeout_seconds: number
+    // Auto-format SQL in the editor when a query is run.
+    format_on_run: boolean
   }
 }
 

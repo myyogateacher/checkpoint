@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { FaArrowLeft, FaGripVertical, FaPlus, FaTrash } from 'react-icons/fa'
 import { api } from '../services/api'
+import { useOrg } from '../context/OrgContext'
 import type { Database, Environment } from '../types'
 import { ENGINE_LABELS } from '../lib/format'
+import { engineSupportsMigrations } from '../lib/engines'
+import { prevalidateMigration, prevalidateStatement, type Violation } from '../lib/validationRules'
 import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
 import { EngineBadge } from '../components/badges'
@@ -27,6 +30,7 @@ export function CreateMigrationPage() {
   // picker; project/global labels disambiguate same-named databases.
   const { databaseId, projectId } = useParams()
   const navigate = useNavigate()
+  const { currentOrgId } = useOrg()
   const [databases, setDatabases] = useState<Database[] | null>(null)
   const [environments, setEnvironments] = useState<Environment[]>([])
   const [dbLabels, setDbLabels] = useState<Record<string, string>>({})
@@ -35,6 +39,10 @@ export function CreateMigrationPage() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [queries, setQueries] = useState<QueryDraft[]>([newQuery()])
+  // Validation: per-statement violations keyed by query, plus migration-level ones.
+  const [stmtViolations, setStmtViolations] = useState<Record<string, Violation[]>>({})
+  const [migrationViolations, setMigrationViolations] = useState<Violation[]>([])
+  const [hasViolations, setHasViolations] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -48,9 +56,10 @@ export function CreateMigrationPage() {
       }
       // Picker mode: load candidate databases plus project/environment names.
       // No default selection — the user picks environment then database.
+      // Project-scoped picker filters by projectId; global picker by org.
       const [dbs, projects, envs] = await Promise.all([
-        api.getDatabases(projectId),
-        api.getProjects(),
+        api.getDatabases(projectId, projectId ? undefined : currentOrgId ?? undefined),
+        api.getProjects(projectId ? undefined : currentOrgId ?? undefined),
         api.getAllEnvironments(),
       ])
       const projectName = Object.fromEntries(projects.map((p) => [p.id, p.name]))
@@ -60,7 +69,7 @@ export function CreateMigrationPage() {
       setEnvironments(envs)
       setDatabases(dbs)
     })()
-  }, [databaseId, projectId])
+  }, [databaseId, projectId, currentOrgId])
 
   const activeDb = databases?.find((d) => d.id === selectedDbId)
   const showPicker = !databaseId
@@ -72,11 +81,15 @@ export function CreateMigrationPage() {
   )
   const pickerDatabases = useMemo(() => {
     if (!databases) return []
-    return projectScoped ? databases.filter((d) => d.environment_id === selectedEnvId) : databases
+    // Only engines that support reviewed DDL migrations can be targeted.
+    const migratable = databases.filter((d) => engineSupportsMigrations(d.engine))
+    return projectScoped ? migratable.filter((d) => d.environment_id === selectedEnvId) : migratable
   }, [databases, projectScoped, selectedEnvId])
 
   function updateQuery(key: string, sql: string) {
     setQueries((prev) => prev.map((q) => (q.key === key ? { ...q, sql } : q)))
+    // Clear this statement's violations as the user edits it.
+    setStmtViolations((prev) => (prev[key] ? { ...prev, [key]: [] } : prev))
   }
   function removeQuery(key: string) {
     setQueries((prev) => (prev.length === 1 ? prev : prev.filter((q) => q.key !== key)))
@@ -84,11 +97,38 @@ export function CreateMigrationPage() {
 
   async function submit(mode: 'draft' | 'submit') {
     setError(null)
+    setStmtViolations({})
+    setMigrationViolations([])
+    setHasViolations(false)
     if (!selectedDbId) return setError('Select a target database.')
-    const cleaned = queries.map((q) => q.sql.trim()).filter(Boolean)
+    const filled = queries.filter((q) => q.sql.trim())
     if (!title.trim()) return setError('A title is required.')
-    if (cleaned.length === 0) return setError('Add at least one query.')
+    if (filled.length === 0) return setError('Add at least one query.')
 
+    // Pre-validate against the target engine's enabled rules: per-statement
+    // violations are attached to each statement, aggregate ones to the migration.
+    if (activeDb) {
+      const sections = await api.getValidationRules(activeDb.engine)
+      const perStmt: Record<string, Violation[]> = {}
+      let any = false
+      for (const q of filled) {
+        const v = prevalidateStatement(q.sql.trim(), sections)
+        if (v.length) {
+          perStmt[q.key] = v
+          any = true
+        }
+      }
+      const combinedSql = filled.map((q) => (q.sql.trim().endsWith(';') ? q.sql.trim() : `${q.sql.trim()};`)).join('\n')
+      const migLevel = prevalidateMigration(combinedSql, sections)
+      if (any || migLevel.length) {
+        setStmtViolations(perStmt)
+        setMigrationViolations(migLevel)
+        setHasViolations(true)
+        return
+      }
+    }
+
+    const cleaned = filled.map((q) => q.sql.trim())
     setSaving(true)
     try {
       const migration = await api.createMigration({
@@ -210,6 +250,16 @@ export function CreateMigrationPage() {
                   onChange={(e) => updateQuery(q.key, e.target.value)}
                   placeholder="ALTER TABLE ..."
                 />
+                {stmtViolations[q.key]?.length ? (
+                  <ul className="mt-2 space-y-1 rounded-lg border border-rose-200/80 bg-rose-50/80 px-3 py-2 dark:border-rose-500/40 dark:bg-rose-500/20">
+                    {stmtViolations[q.key].map((v, vi) => (
+                      <li key={vi} className="flex gap-2 text-xs text-rose-700 dark:text-rose-200">
+                        <span className="font-semibold">{v.ruleTitle}:</span>
+                        <span className="text-rose-600 dark:text-rose-300">{v.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             ))}
           </div>
@@ -220,6 +270,24 @@ export function CreateMigrationPage() {
           >
             <FaPlus size={11} /> Add statement
           </button>
+
+          {hasViolations ? (
+            <div className="mt-4 rounded-lg border border-rose-200/80 bg-rose-50/80 px-4 py-3 dark:border-rose-500/40 dark:bg-rose-500/20">
+              <p className="text-sm font-medium text-rose-700 dark:text-rose-200">
+                This migration violates validation rules. Fix the issues below each statement, or adjust the rules.
+              </p>
+              {migrationViolations.length ? (
+                <ul className="mt-2 space-y-1">
+                  {migrationViolations.map((v, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-rose-700 dark:text-rose-200">
+                      <span className="font-semibold">{v.ruleTitle}:</span>
+                      <span className="text-rose-600 dark:text-rose-300">{v.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </Card>
 
         <ErrorBanner message={error} />

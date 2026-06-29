@@ -16,13 +16,19 @@ import type {
   ManagedUser,
   Migration,
   MigrationStatus,
+  Organization,
   Project,
+  ProjectSettings,
   QueryResult,
+  SavedQuery,
   SchemaSnapshot,
   SessionState,
   UserRole,
 } from '../types'
 import * as seed from './mockData'
+import { ORG_LOCKED, slugify } from '../lib/config'
+import { rulesForEngine, type ValidationSection } from '../lib/validationRules'
+import type { DatabaseEngine } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const USE_MOCKS = true
@@ -33,6 +39,9 @@ function delay<T>(value: T, ms = 280): Promise<T> {
 }
 
 function clone<T>(value: T): T {
+  // JSON.stringify(undefined) returns undefined, which JSON.parse can't read.
+  // Pass undefined/null through untouched (e.g. a `.find()` that missed).
+  if (value === undefined || value === null) return value
   return JSON.parse(JSON.stringify(value)) as T
 }
 
@@ -76,14 +85,48 @@ export const api = {
     return delay(null, 150)
   },
 
+  // --- Organizations --------------------------------------------------------
+  getOrganizations(): Promise<Organization[]> {
+    if (!USE_MOCKS) return request<Organization[]>('/api/organizations')
+    return delay(clone(seed.organizations))
+  },
+  createOrganization(name: string): Promise<Organization> {
+    if (!USE_MOCKS) return request<Organization>('/api/organizations', { method: 'POST', body: JSON.stringify({ name }) })
+    if (ORG_LOCKED) return Promise.reject(new Error('This deployment is bound to a single organization.'))
+    const org: Organization = {
+      id: `org_${Math.floor(performance.now())}`,
+      name: name.trim(),
+      slug: slugify(name) || `org-${seed.organizations.length + 1}`,
+      created_at: new Date().toISOString(),
+    }
+    seed.organizations.push(org)
+    return delay(clone(org))
+  },
+
   // --- Projects / environments / databases ----------------------------------
-  getProjects(): Promise<Project[]> {
-    if (!USE_MOCKS) return request<Project[]>('/api/projects')
-    return delay(clone(seed.projects))
+  getProjects(orgId?: string): Promise<Project[]> {
+    if (!USE_MOCKS) return request<Project[]>(`/api/projects${orgId ? `?org=${orgId}` : ''}`)
+    const all = orgId ? seed.projects.filter((p) => p.org_id === orgId) : seed.projects
+    return delay(clone(all))
   },
   getProject(projectId: string): Promise<Project | undefined> {
     if (!USE_MOCKS) return request<Project>(`/api/projects/${projectId}`)
     return delay(clone(seed.projects.find((p) => p.id === projectId)))
+  },
+  getProjectSettings(projectId: string): Promise<ProjectSettings> {
+    if (!USE_MOCKS) return request<ProjectSettings>(`/api/projects/${projectId}/settings`)
+    const existing = seed.projectSettings[projectId]
+    return delay(clone(existing ?? { approvers: [], releasers: [], required_approvals: 1 }))
+  },
+  saveProjectSettings(projectId: string, next: ProjectSettings): Promise<ProjectSettings> {
+    if (!USE_MOCKS) {
+      return request<ProjectSettings>(`/api/projects/${projectId}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(next),
+      })
+    }
+    seed.projectSettings[projectId] = clone(next)
+    return delay(clone(next))
   },
   getEnvironments(projectId: string): Promise<Environment[]> {
     if (!USE_MOCKS) return request<Environment[]>(`/api/projects/${projectId}/environments`)
@@ -93,9 +136,18 @@ export const api = {
     if (!USE_MOCKS) return request<Environment[]>('/api/environments')
     return delay(clone(seed.environments))
   },
-  getDatabases(projectId?: string): Promise<Database[]> {
-    if (!USE_MOCKS) return request<Database[]>(`/api/databases${projectId ? `?project=${projectId}` : ''}`)
-    const all = projectId ? seed.databases.filter((d) => d.project_id === projectId) : seed.databases
+  getDatabases(projectId?: string, orgId?: string): Promise<Database[]> {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams()
+      if (projectId) params.set('project', projectId)
+      if (orgId) params.set('org', orgId)
+      const qs = params.toString()
+      return request<Database[]>(`/api/databases${qs ? `?${qs}` : ''}`)
+    }
+    const orgOfProject = (pid: string) => seed.projects.find((p) => p.id === pid)?.org_id
+    const all = seed.databases.filter(
+      (d) => (!projectId || d.project_id === projectId) && (!orgId || orgOfProject(d.project_id) === orgId),
+    )
     return delay(clone(all))
   },
   createDatabase(input: DatabaseInput): Promise<Database> {
@@ -165,11 +217,11 @@ export const api = {
   },
 
   // --- Read panel -----------------------------------------------------------
-  runReadQuery(databaseId: string, sql: string): Promise<QueryResult> {
+  runReadQuery(databaseId: string, sql: string, timeoutSeconds?: number): Promise<QueryResult> {
     if (!USE_MOCKS) {
       return request<QueryResult>(`/api/databases/${databaseId}/query`, {
         method: 'POST',
-        body: JSON.stringify({ sql }),
+        body: JSON.stringify({ sql, timeout_seconds: timeoutSeconds }),
       })
     }
     const trimmed = sql.trim().toLowerCase()
@@ -190,13 +242,76 @@ export const api = {
       }
       return row
     })
+    // Audit every read query (the real backend logs this server-side).
+    const db = seed.databases.find((d) => d.id === databaseId)
+    const env = db && seed.environments.find((e) => e.id === db.environment_id)
+    const oneLine = sql.replace(/\s+/g, ' ').trim()
+    seed.auditLogs.unshift({
+      id: `a_${Math.floor(performance.now())}`,
+      actor_email: seed.currentUser.email,
+      actor_name: seed.currentUser.name,
+      action: 'query.read',
+      entity_type: 'database',
+      entity_id: databaseId,
+      entity_label: db?.name ?? 'database',
+      summary: `Ran read query on ${db?.name ?? 'database'}${env ? ` (${env.name})` : ''} — ${oneLine.slice(0, 80)}${oneLine.length > 80 ? '…' : ''}`,
+      created_at: new Date().toISOString(),
+    })
     return delay({ columns, rows, row_count: rows.length, duration_ms: 12 + Math.round(rows.length * 1.5) }, 420)
   },
 
+  // --- Saved queries --------------------------------------------------------
+  getSavedQueries(): Promise<SavedQuery[]> {
+    if (!USE_MOCKS) return request<SavedQuery[]>('/api/saved-queries')
+    return delay(clone(seed.savedQueries))
+  },
+  getSavedQuery(id: string): Promise<SavedQuery | undefined> {
+    if (!USE_MOCKS) return request<SavedQuery>(`/api/saved-queries/${id}`)
+    return delay(clone(seed.savedQueries.find((s) => s.id === id)))
+  },
+  createSavedQuery(input: {
+    database_id: string
+    name: string
+    description: string | null
+    tags: string[]
+    sql: string
+    shared: boolean
+  }): Promise<SavedQuery> {
+    if (!USE_MOCKS) return request<SavedQuery>('/api/saved-queries', { method: 'POST', body: JSON.stringify(input) })
+    const db = seed.databases.find((d) => d.id === input.database_id)
+    const saved: SavedQuery = {
+      id: `sq_${Math.floor(performance.now())}`,
+      name: input.name,
+      description: input.description,
+      tags: input.tags,
+      database_id: input.database_id,
+      database_name: db?.name ?? 'database',
+      engine: db?.engine ?? 'postgres',
+      sql: input.sql,
+      shared: input.shared,
+      author_email: seed.currentUser.email,
+      created_at: new Date().toISOString(),
+    }
+    seed.savedQueries.unshift(saved)
+    return delay(clone(saved))
+  },
+
   // --- Migrations -----------------------------------------------------------
-  getMigrations(databaseId?: string): Promise<Migration[]> {
-    if (!USE_MOCKS) return request<Migration[]>(`/api/migrations${databaseId ? `?database=${databaseId}` : ''}`)
-    const all = databaseId ? seed.migrations.filter((m) => m.database_id === databaseId) : seed.migrations
+  getMigrations(databaseId?: string, orgId?: string): Promise<Migration[]> {
+    if (!USE_MOCKS) {
+      const params = new URLSearchParams()
+      if (databaseId) params.set('database', databaseId)
+      if (orgId) params.set('org', orgId)
+      const qs = params.toString()
+      return request<Migration[]>(`/api/migrations${qs ? `?${qs}` : ''}`)
+    }
+    const orgOfDb = (dbId: string) => {
+      const pid = seed.databases.find((d) => d.id === dbId)?.project_id
+      return pid ? seed.projects.find((p) => p.id === pid)?.org_id : undefined
+    }
+    const all = seed.migrations.filter(
+      (m) => (!databaseId || m.database_id === databaseId) && (!orgId || orgOfDb(m.database_id) === orgId),
+    )
     return delay(clone(all))
   },
   getProjectMigrations(projectId: string): Promise<Migration[]> {
@@ -284,6 +399,22 @@ export const api = {
       created_at: new Date().toISOString(),
     })
     return delay(clone(m))
+  },
+
+  // --- Validation rules -----------------------------------------------------
+  getValidationRules(engine: DatabaseEngine): Promise<ValidationSection[]> {
+    if (!USE_MOCKS) return request<ValidationSection[]>(`/api/validation-rules/${engine}`)
+    return delay(clone(seed.validationRules[engine] ?? rulesForEngine(engine)))
+  },
+  saveValidationRules(engine: DatabaseEngine, sections: ValidationSection[]): Promise<ValidationSection[]> {
+    if (!USE_MOCKS) {
+      return request<ValidationSection[]>(`/api/validation-rules/${engine}`, {
+        method: 'PUT',
+        body: JSON.stringify(sections),
+      })
+    }
+    seed.validationRules[engine] = clone(sections)
+    return delay(clone(sections))
   },
 
   // --- Settings -------------------------------------------------------------

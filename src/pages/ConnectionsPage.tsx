@@ -26,15 +26,15 @@ export function ConnectionsPage() {
     <div className="grid gap-4 md:grid-cols-2">
       <ConnectionCard
         connection={read}
-        editable={can(user?.role, 'edit')}
+        editable={can(user?.role, 'manage_users')}
         onEdit={() => setEditing(read)}
-        note="Used for the read panel and schema pulls."
+        note="Used for the read panel and schema pulls. Admin-only to edit."
       />
       <ConnectionCard
         connection={write}
         editable={can(user?.role, 'manage_users')}
         onEdit={() => setEditing(write)}
-        note="Used to apply approved migrations. Admin-only."
+        note="Used to apply approved migrations. Admin-only to edit."
       />
 
       {editing ? (

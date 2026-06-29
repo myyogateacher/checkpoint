@@ -10,13 +10,18 @@ import { Dropdown } from '../components/Dropdown'
 import { Button, Card, ErrorBanner, Field, Modal, Spinner, TextInput } from '../components/ui'
 
 const ROLES: UserRole[] = ['admin', 'editor', 'viewer']
-const ROLE_OPTIONS = ROLES.map((r) => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1) }))
 
 const ROLE_HINTS: Record<UserRole, string> = {
-  admin: 'Full access — approve & apply migrations, manage users and connections.',
-  editor: 'Create and submit migrations, run read queries, pull schema.',
+  admin: 'Full access — approve & apply migrations, manage users, connections & settings.',
+  editor: 'Create & submit migrations, add reviewers, comment, run read queries, pull schema.',
   viewer: 'Read-only — browse schema and run read queries.',
 }
+
+const ROLE_OPTIONS = ROLES.map((r) => ({
+  value: r,
+  label: r.charAt(0).toUpperCase() + r.slice(1),
+  hint: ROLE_HINTS[r],
+}))
 
 export function UsersPage() {
   const [users, setUsers] = useState<ManagedUser[] | null>(null)
@@ -75,7 +80,7 @@ export function UsersPage() {
     <>
       <PageHeader
         eyebrow="Access"
-        title="Users"
+        title="Team"
         description="Roles control who can create, approve, and apply migrations."
         actions={
           <Button onClick={() => setShowInvite(true)}>
@@ -124,6 +129,7 @@ export function UsersPage() {
                           options={ROLE_OPTIONS}
                           onChange={(v) => changeRole(u.id, v as UserRole)}
                           className="w-36"
+                          menuMinWidth={300}
                         />
                       )}
                     </td>
@@ -165,8 +171,8 @@ export function UsersPage() {
         <Field label="Email">
           <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" />
         </Field>
-        <Field label="Role" hint={ROLE_HINTS[role]}>
-          <Dropdown value={role} options={ROLE_OPTIONS} onChange={(v) => setRole(v as UserRole)} />
+        <Field label="Role">
+          <Dropdown value={role} options={ROLE_OPTIONS} onChange={(v) => setRole(v as UserRole)} menuMinWidth={300} />
         </Field>
         <ErrorBanner message={error} />
       </Modal>

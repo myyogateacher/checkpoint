@@ -4,6 +4,7 @@ import { FaDatabase, FaFolder, FaLayerGroup, FaPlus } from 'react-icons/fa'
 import { api } from '../services/api'
 import type { Project } from '../types'
 import { useAuth } from '../context/AuthContext'
+import { useOrg } from '../context/OrgContext'
 import { can, formatDate } from '../lib/format'
 import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
@@ -19,6 +20,7 @@ function parseTags(raw: string): string[] {
 
 export function ProjectsPage() {
   const { user } = useAuth()
+  const { currentOrgId } = useOrg()
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState('')
@@ -26,13 +28,15 @@ export function ProjectsPage() {
   const [tags, setTags] = useState('')
 
   useEffect(() => {
-    void api.getProjects().then(setProjects)
-  }, [])
+    setProjects(null)
+    void api.getProjects(currentOrgId ?? undefined).then(setProjects)
+  }, [currentOrgId])
 
   function handleCreate() {
     // Stub: optimistically add to the list. The real backend persists this.
     const project: Project = {
       id: `p_${Date.now()}`,
+      org_id: currentOrgId ?? 'org_primary',
       name,
       description: description || null,
       tags: parseTags(tags),

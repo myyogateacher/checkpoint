@@ -53,7 +53,7 @@ export function AuditLogPage() {
     <>
       <PageHeader
         eyebrow="Accountability"
-        title="Audit log"
+        title="Audit Log"
         description="An immutable record of every action taken in Checkpoint."
       />
 

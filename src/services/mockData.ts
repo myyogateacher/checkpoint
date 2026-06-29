@@ -2,13 +2,26 @@ import type {
   AppSettings,
   AuditLogEntry,
   Database,
+  DatabaseEngine,
   Environment,
   ManagedUser,
   Migration,
+  Organization,
   Project,
+  ProjectSettings,
+  SavedQuery,
   SchemaSnapshot,
   SessionUser,
 } from '../types'
+import { LOCKED_ORG_NAME, ORG_LOCKED, slugify } from '../lib/config'
+
+// The current user is a member of every org in this list. In locked mode the
+// single org comes from VITE_ORG; otherwise a default org owns the seed data.
+const primaryOrgName = ORG_LOCKED ? LOCKED_ORG_NAME : 'Acme Inc'
+
+export const organizations: Organization[] = [
+  { id: 'org_primary', name: primaryOrgName, slug: slugify(primaryOrgName) || 'org', created_at: '2025-10-01T00:00:00Z' },
+]
 
 // Deterministic seed data backing the stubbed API. The real backend replaces
 // this wholesale; the shapes are the contract.
@@ -24,29 +37,31 @@ export const currentUser: SessionUser = {
 export const projects: Project[] = [
   {
     id: 'p_core',
+    org_id: 'org_primary',
     name: 'Core Platform',
     description: 'Primary application databases — users, billing, sessions.',
     tags: ['production', 'pii', 'tier-1'],
     created_at: '2025-11-02T09:00:00Z',
     environment_count: 3,
-    database_count: 5,
+    database_count: 6,
   },
   {
     id: 'p_analytics',
+    org_id: 'org_primary',
     name: 'Analytics',
     description: 'Event pipeline and reporting warehouse.',
     tags: ['warehouse', 'tier-2'],
     created_at: '2026-01-14T12:30:00Z',
     environment_count: 2,
-    database_count: 2,
+    database_count: 3,
   },
 ]
 
 export const environments: Environment[] = [
-  { id: 'e_core_prod', project_id: 'p_core', name: 'production', color: 'rose', database_count: 2 },
+  { id: 'e_core_prod', project_id: 'p_core', name: 'production', color: 'rose', database_count: 3 },
   { id: 'e_core_staging', project_id: 'p_core', name: 'staging', color: 'amber', database_count: 2 },
   { id: 'e_core_dev', project_id: 'p_core', name: 'development', color: 'emerald', database_count: 1 },
-  { id: 'e_an_prod', project_id: 'p_analytics', name: 'production', color: 'rose', database_count: 1 },
+  { id: 'e_an_prod', project_id: 'p_analytics', name: 'production', color: 'rose', database_count: 2 },
   { id: 'e_an_staging', project_id: 'p_analytics', name: 'staging', color: 'amber', database_count: 1 },
 ]
 
@@ -87,6 +102,18 @@ export const databases: Database[] = [
     write_connection: conn('write', 'prod-mysql-primary.internal', 3306, 'billing'),
     last_synced_at: '2026-06-20T08:05:00Z',
     table_count: 2,
+  },
+  {
+    id: 'db_core_prod_cache',
+    project_id: 'p_core',
+    environment_id: 'e_core_prod',
+    name: 'session_cache',
+    engine: 'redis',
+    tags: ['cache'],
+    read_connection: conn('read', 'prod-redis.internal', 6379, '0'),
+    write_connection: conn('write', 'prod-redis.internal', 6379, '0'),
+    last_synced_at: null,
+    table_count: 0,
   },
   {
     id: 'db_core_staging_main',
@@ -135,6 +162,18 @@ export const databases: Database[] = [
     write_connection: conn('write', 'ch-prod.internal', 8123, 'events'),
     last_synced_at: '2026-06-23T15:10:00Z',
     table_count: 2,
+  },
+  {
+    id: 'db_an_prod_warehouse',
+    project_id: 'p_analytics',
+    environment_id: 'e_an_prod',
+    name: 'warehouse',
+    engine: 'snowflake',
+    tags: ['warehouse', 'reporting'],
+    read_connection: conn('read', 'acme.snowflakecomputing.com', 443, 'ANALYTICS'),
+    write_connection: conn('write', 'acme.snowflakecomputing.com', 443, 'ANALYTICS'),
+    last_synced_at: null,
+    table_count: 0,
   },
   {
     id: 'db_an_staging_events',
@@ -238,6 +277,44 @@ export const schemas: Record<string, SchemaSnapshot> = {
           { name: 'count', data_type: 'UInt64', nullable: false, default: null, is_primary_key: false },
         ],
         indexes: [{ name: 'ORDER BY', columns: ['day', 'event_type'], unique: false }],
+      },
+    ],
+  },
+  db_core_prod_billing: {
+    database_id: 'db_core_prod_billing',
+    synced_at: '2026-06-20T08:05:00Z',
+    tables: [
+      {
+        name: 'invoices',
+        schema: 'billing',
+        estimated_rows: 92450,
+        columns: [
+          { name: 'id', data_type: 'bigint', nullable: false, default: null, is_primary_key: true },
+          { name: 'customer_id', data_type: 'bigint', nullable: false, default: null, is_primary_key: false },
+          { name: 'amount_cents', data_type: 'int', nullable: false, default: '0', is_primary_key: false },
+          { name: 'currency', data_type: 'char(3)', nullable: true, default: null, is_primary_key: false },
+          { name: 'status', data_type: 'varchar(16)', nullable: false, default: "'draft'", is_primary_key: false },
+          { name: 'created_at', data_type: 'datetime', nullable: false, default: 'CURRENT_TIMESTAMP', is_primary_key: false },
+        ],
+        indexes: [
+          { name: 'PRIMARY', columns: ['id'], unique: true },
+          { name: 'invoices_customer_id_idx', columns: ['customer_id'], unique: false },
+        ],
+      },
+      {
+        name: 'customers',
+        schema: 'billing',
+        estimated_rows: 12880,
+        columns: [
+          { name: 'id', data_type: 'bigint', nullable: false, default: null, is_primary_key: true },
+          { name: 'email', data_type: 'varchar(255)', nullable: false, default: null, is_primary_key: false },
+          { name: 'name', data_type: 'varchar(255)', nullable: true, default: null, is_primary_key: false },
+          { name: 'created_at', data_type: 'datetime', nullable: false, default: 'CURRENT_TIMESTAMP', is_primary_key: false },
+        ],
+        indexes: [
+          { name: 'PRIMARY', columns: ['id'], unique: true },
+          { name: 'customers_email_key', columns: ['email'], unique: true },
+        ],
       },
     ],
   },
@@ -356,6 +433,52 @@ export const users: ManagedUser[] = [
   },
 ]
 
+export const projectSettings: Record<string, ProjectSettings> = {
+  p_core: {
+    approvers: ['pankaj@myyogateacher.com', 'ravi@myyogateacher.com'],
+    releasers: ['pankaj@myyogateacher.com'],
+    required_approvals: 2,
+  },
+  p_analytics: {
+    approvers: ['pankaj@myyogateacher.com'],
+    releasers: ['pankaj@myyogateacher.com'],
+    required_approvals: 1,
+  },
+}
+
+export const savedQueries: SavedQuery[] = [
+  {
+    id: 'sq_1',
+    name: 'Active users (30d)',
+    description: 'Users seen in the last 30 days.',
+    tags: ['users', 'analytics'],
+    database_id: 'db_core_prod_main',
+    database_name: 'app_main',
+    engine: 'postgres',
+    sql: 'SELECT id, email, role\nFROM users\nWHERE created_at > now() - interval \'30 days\'\nORDER BY created_at DESC;',
+    shared: true,
+    author_email: 'pankaj@myyogateacher.com',
+    created_at: '2026-06-22T09:30:00Z',
+  },
+  {
+    id: 'sq_2',
+    name: 'Unpaid invoices',
+    description: null,
+    tags: ['billing'],
+    database_id: 'db_core_prod_billing',
+    database_name: 'billing',
+    engine: 'mysql',
+    sql: "SELECT id, customer_id, amount_cents\nFROM invoices\nWHERE status = 'draft';",
+    shared: false,
+    author_email: 'ravi@myyogateacher.com',
+    created_at: '2026-06-24T14:10:00Z',
+  },
+]
+
+// Saved validation-rule overrides per engine; empty entries fall back to the
+// catalog defaults (see lib/validationRules.ts).
+export const validationRules: Partial<Record<DatabaseEngine, import('../lib/validationRules').ValidationSection[]>> = {}
+
 export const settings: AppSettings = {
   email: {
     enabled: true,
@@ -367,11 +490,15 @@ export const settings: AppSettings = {
   },
   slack: {
     enabled: true,
-    webhook_url: 'https://hooks.slack.com/services/T000/B000/XXXX',
-    channel: '#db-migrations',
+    notification_token: '',
+    channel_id: 'C012AB3CD',
     notify_on_submit: true,
     notify_on_approve: false,
     notify_on_apply: true,
+  },
+  query: {
+    default_timeout_seconds: 30,
+    format_on_run: true,
   },
 }
 

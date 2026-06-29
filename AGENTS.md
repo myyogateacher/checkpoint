@@ -55,7 +55,10 @@ Always run `bun run typecheck` after changes. `tsconfig` has `noUnusedLocals` /
   per-element `dark:` variants for neutrals. Accent colors (indigo/emerald/rose/
   amber/sky) are intentionally untouched. **If you introduce a neutral shade not
   already mapped (e.g. `bg-white/45`), add a one-line override to the dark block
-  in `index.css`** or it won't theme.
+  in `index.css`** or it won't theme. This includes **variant** classes:
+  `hover:bg-white/*` needs its own `.dark .hover\:bg-white\/NN:hover` override
+  (the base-class remap does not cover the `hover:` variant), otherwise hovers
+  turn near-white and hide light text.
 - **Active nav/selection highlight:** use
   `bg-indigo-50 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300`
   (plain `bg-white/*` reads as flat gray in dark mode).

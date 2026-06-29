@@ -5,6 +5,7 @@ import { api } from '../services/api'
 import type { Migration, MigrationStatus } from '../types'
 import { STATUS_META, can } from '../lib/format'
 import { useAuth } from '../context/AuthContext'
+import { useOrg } from '../context/OrgContext'
 import { PageHeader } from '../components/PageHeader'
 import { Button, Card, Spinner } from '../components/ui'
 import { MigrationTable } from '../components/MigrationTable'
@@ -20,12 +21,14 @@ const FILTERS: Array<{ value: MigrationStatus | 'all'; label: string }> = [
 
 export function MigrationsListPage() {
   const { user } = useAuth()
+  const { currentOrgId } = useOrg()
   const [migrations, setMigrations] = useState<Migration[] | null>(null)
   const [filter, setFilter] = useState<MigrationStatus | 'all'>('all')
 
   useEffect(() => {
-    void api.getMigrations().then(setMigrations)
-  }, [])
+    setMigrations(null)
+    void api.getMigrations(undefined, currentOrgId ?? undefined).then(setMigrations)
+  }, [currentOrgId])
 
   const filtered = useMemo(() => {
     if (!migrations) return []

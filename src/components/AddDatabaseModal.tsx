@@ -1,19 +1,10 @@
 import { useMemo, useState } from 'react'
 import { api } from '../services/api'
 import type { ConnectionInput, Database, DatabaseEngine, Environment } from '../types'
-import { ENGINE_LABELS } from '../lib/format'
 import { notify } from '../lib/toast'
+import { ENGINE_OPTIONS, engineDefaultPort } from '../lib/engines'
 import { Button, ErrorBanner, Field, Modal, TextInput } from './ui'
 import { Dropdown } from './Dropdown'
-
-const ENGINES: DatabaseEngine[] = ['postgres', 'mysql', 'clickhouse']
-const ENGINE_OPTIONS = ENGINES.map((e) => ({ value: e, label: ENGINE_LABELS[e] }))
-
-const DEFAULT_PORT: Record<DatabaseEngine, number> = {
-  postgres: 5432,
-  mysql: 3306,
-  clickhouse: 8123,
-}
 
 function emptyConn(port: number, username: string): ConnectionInput {
   return { host: '', port, username, database: '', ssl: true, password: '' }
@@ -36,16 +27,16 @@ export function AddDatabaseModal({
   const [name, setName] = useState('')
   const [engine, setEngine] = useState<DatabaseEngine>('postgres')
   const [tags, setTags] = useState('')
-  const [read, setRead] = useState<ConnectionInput>(emptyConn(DEFAULT_PORT.postgres, 'readonly'))
-  const [write, setWrite] = useState<ConnectionInput>(emptyConn(DEFAULT_PORT.postgres, 'migrator'))
+  const [read, setRead] = useState<ConnectionInput>(emptyConn(engineDefaultPort('postgres'), 'readonly'))
+  const [write, setWrite] = useState<ConnectionInput>(emptyConn(engineDefaultPort('postgres'), 'migrator'))
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   // When the engine changes, refresh default ports if the user hasn't overridden them.
   function changeEngine(next: DatabaseEngine) {
     setEngine(next)
-    setRead((r) => ({ ...r, port: r.port === DEFAULT_PORT[engine] ? DEFAULT_PORT[next] : r.port }))
-    setWrite((w) => ({ ...w, port: w.port === DEFAULT_PORT[engine] ? DEFAULT_PORT[next] : w.port }))
+    setRead((r) => ({ ...r, port: r.port === engineDefaultPort(engine) ? engineDefaultPort(next) : r.port }))
+    setWrite((w) => ({ ...w, port: w.port === engineDefaultPort(engine) ? engineDefaultPort(next) : w.port }))
   }
 
   const canSubmit = useMemo(
@@ -110,7 +101,14 @@ export function AddDatabaseModal({
           />
         </Field>
         <Field label="Engine">
-          <Dropdown value={engine} options={ENGINE_OPTIONS} onChange={(v) => changeEngine(v as DatabaseEngine)} />
+          <Dropdown
+            value={engine}
+            options={ENGINE_OPTIONS}
+            onChange={(v) => changeEngine(v as DatabaseEngine)}
+            searchable
+            searchPlaceholder="Search database type…"
+            menuMinWidth={260}
+          />
         </Field>
       </div>
 

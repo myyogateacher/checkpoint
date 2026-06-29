@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
-import { FaChevronDown, FaChevronRight, FaKey, FaSync, FaTable } from 'react-icons/fa'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { FaChevronDown, FaChevronRight, FaKey, FaSearch, FaSync, FaTable } from 'react-icons/fa'
 import { api } from '../services/api'
-import type { SchemaSnapshot, TableDef } from '../types'
+import type { ColumnDef, SchemaSnapshot, TableDef } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { can, formatRows, relativeTime } from '../lib/format'
 import { notify } from '../lib/toast'
-import { Button, Card, EmptyState, Spinner } from '../components/ui'
+import { Button, Card, EmptyState, Spinner, TextInput } from '../components/ui'
 import { useDatabase } from './DatabaseLayout'
 
 export function SchemaPage() {
@@ -14,6 +14,7 @@ export function SchemaPage() {
   const [schema, setSchema] = useState<SchemaSnapshot | null | undefined>(null)
   const [syncing, setSyncing] = useState(false)
   const [openTable, setOpenTable] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
   const load = useCallback(() => {
     setSchema(null)
@@ -24,6 +25,23 @@ export function SchemaPage() {
   }, [database.id])
 
   useEffect(load, [load])
+
+  const q = query.trim().toLowerCase()
+  const dbMatch = !!q && database.name.toLowerCase().includes(q)
+
+  // Filter by database / table / column name. A table is shown if the database
+  // name matches, its name matches, or any column matches.
+  const visible = useMemo(() => {
+    const tables = schema?.tables ?? []
+    if (!q) return tables.map((table) => ({ table, columns: table.columns }))
+    return tables
+      .map((table) => {
+        const tableMatch = dbMatch || table.name.toLowerCase().includes(q)
+        const columns = tableMatch ? table.columns : table.columns.filter((c) => c.name.toLowerCase().includes(q))
+        return { table, columns, include: tableMatch || columns.length > 0 }
+      })
+      .filter((r) => r.include)
+  }, [schema, q, dbMatch])
 
   async function handleSync() {
     setSyncing(true)
@@ -54,6 +72,18 @@ export function SchemaPage() {
         ) : null}
       </div>
 
+      {schema && schema.tables.length > 0 ? (
+        <div className="relative mb-4 max-w-sm">
+          <FaSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+          <TextInput
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search database, table, or column…"
+            className="pl-9"
+          />
+        </div>
+      ) : null}
+
       {schema === null ? (
         <Spinner label="Loading schema…" />
       ) : schema === undefined || schema.tables.length === 0 ? (
@@ -62,14 +92,17 @@ export function SchemaPage() {
           title="No schema snapshot"
           hint="Pull the schema from the database to populate tables and structure."
         />
+      ) : visible.length === 0 ? (
+        <EmptyState icon={<FaSearch />} title="No matches" hint={`Nothing matches “${query}”.`} />
       ) : (
         <div className="space-y-2">
-          {schema.tables.map((table) => (
+          {visible.map(({ table, columns }) => (
             <TableRow
               key={table.name}
               table={table}
-              open={openTable === table.name}
-              onToggle={() => setOpenTable((prev) => (prev === table.name ? null : table.name))}
+              columns={columns}
+              open={q ? true : openTable === table.name}
+              onToggle={() => (q ? undefined : setOpenTable((prev) => (prev === table.name ? null : table.name)))}
             />
           ))}
         </div>
@@ -78,7 +111,17 @@ export function SchemaPage() {
   )
 }
 
-function TableRow({ table, open, onToggle }: { table: TableDef; open: boolean; onToggle: () => void }) {
+function TableRow({
+  table,
+  columns,
+  open,
+  onToggle,
+}: {
+  table: TableDef
+  columns: ColumnDef[]
+  open: boolean
+  onToggle: () => void
+}) {
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200/60 bg-white/40">
       <button
@@ -107,7 +150,7 @@ function TableRow({ table, open, onToggle }: { table: TableDef; open: boolean; o
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/40">
-              {table.columns.map((col) => (
+              {columns.map((col) => (
                 <tr key={col.name}>
                   <td className="py-1.5 font-mono text-[13px] text-slate-800">
                     <span className="inline-flex items-center gap-1.5">
