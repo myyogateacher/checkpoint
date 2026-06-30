@@ -69,12 +69,13 @@ const LABEL: Record<MigrationEvent, string> = {
 export async function notifyMigration(
   orgId: string,
   event: MigrationEvent,
-  info: { title: string; database: string; actor: string },
+  info: { title: string; database: string; actor: string; url?: string },
 ): Promise<void> {
   const slack = await loadSlack(orgId)
   if (!slack || !slack.enabled || !slack.notification_token || !slack.channel_id) return
   if (!slack[TOGGLE[event]]) return
   const verb = event === 'submit' ? 'Submitted' : event === 'approve' ? 'Approved' : 'Applied'
-  const text = `${LABEL[event]}\n*${info.title}* — ${info.database}\n${verb} by ${info.actor}`
+  const link = info.url ? `\n<${info.url}|View migration>` : ''
+  const text = `${LABEL[event]}\n*${info.title}* — ${info.database}\n${verb} by ${info.actor}${link}`
   await postMessage(slack, text)
 }
