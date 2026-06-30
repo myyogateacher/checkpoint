@@ -6,6 +6,7 @@ import { iso } from '../lib/serialize'
 import { writeAudit } from '../lib/audit'
 import { getConnectionSecret } from './databases.repo'
 import { applyStatements } from '../lib/externalDb'
+import { notifyMigration } from '../lib/slack'
 import type { MigrationStatus, SessionUser } from '../types'
 
 interface MigRow {
@@ -132,6 +133,7 @@ export function registerMigrations(router: Router) {
     await addEvent(id, user, 'created', null)
     if (body.submit) await addEvent(id, user, 'submitted', null)
     await writeAudit({ actor: user, orgId: db.org_id, action: body.submit ? 'migration.submit' : 'migration.create', entityType: 'migration', entityId: id, entityLabel: body.title.trim(), summary: `${body.submit ? 'Submitted' : 'Created'} migration on ${db.name}` })
+    if (body.submit) await notifyMigration(db.org_id, 'submit', { title: body.title.trim(), database: db.name, actor: user.email })
     return json(await fullMigration(await loadMig(user.id, id)))
   })
 
@@ -173,6 +175,9 @@ export function registerMigrations(router: Router) {
       }
       await addEvent(mig.id, user, action, note ?? null)
       await writeAudit({ actor: user, orgId: mig.org_id, action: `migration.${action}`, entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `${action[0].toUpperCase() + action.slice(1)} migration on ${mig.db_name}` })
+      if (action === 'submit' || action === 'approve' || action === 'apply') {
+        await notifyMigration(mig.org_id, action, { title: mig.title, database: mig.db_name, actor: user.email })
+      }
       return json(await fullMigration(await loadMig(user.id, mig.id)))
     })
   }
