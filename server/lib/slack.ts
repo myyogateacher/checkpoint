@@ -72,7 +72,7 @@ interface MigrationInfo {
   env_name: string | null
 }
 
-async function loadMigrationInfo(migrationId: string): Promise<MigrationInfo | null> {
+async function loadMigrationInfo(migrationId: string): Promise<MigrationInfo | undefined> {
   return queryOne<MigrationInfo>(
     `SELECT m.title, m.description, d.name AS db_name, p.name AS project_name, e.name AS env_name
        FROM migrations m
