@@ -155,10 +155,11 @@ export const api = {
   },
 
   // --- Read panel -----------------------------------------------------------
-  runReadQuery(databaseId: string, sql: string, timeoutSeconds?: number): Promise<QueryResult> {
+  runReadQuery(databaseId: string, sql: string): Promise<QueryResult> {
+    // The statement timeout is enforced server-side from the org's query settings.
     return request<QueryResult>(`/api/databases/${databaseId}/query`, {
       method: 'POST',
-      body: JSON.stringify({ sql, timeout_seconds: timeoutSeconds }),
+      body: JSON.stringify({ sql }),
     })
   },
 
@@ -205,6 +206,12 @@ export const api = {
   },
   transitionMigration(id: string, action: 'submit' | 'approve' | 'reject' | 'apply', note?: string): Promise<Migration> {
     return request<Migration>(`/api/migrations/${id}/${action}`, { method: 'POST', body: JSON.stringify({ note }) })
+  },
+  scheduleMigration(id: string, scheduledFor: string): Promise<Migration> {
+    return request<Migration>(`/api/migrations/${id}/schedule`, { method: 'POST', body: JSON.stringify({ scheduled_for: scheduledFor }) })
+  },
+  cancelMigrationSchedule(id: string): Promise<Migration> {
+    return request<Migration>(`/api/migrations/${id}/cancel-schedule`, { method: 'POST' })
   },
   setMigrationReviewers(id: string, reviewers: string[]): Promise<Migration> {
     return request<Migration>(`/api/migrations/${id}/reviewers`, { method: 'PUT', body: JSON.stringify({ reviewers }) })

@@ -3,6 +3,7 @@
 
 import { env } from './env'
 import { initDb } from './db/init'
+import { startScheduler } from './lib/scheduler'
 import { Router, HttpError, json, type Ctx } from './lib/http'
 import { getSessionUser } from './lib/session'
 
@@ -100,6 +101,7 @@ async function serveStatic(url: URL): Promise<Response> {
 }
 
 await initDb()
+startScheduler()
 
 const server = Bun.serve({
   port: env.port,

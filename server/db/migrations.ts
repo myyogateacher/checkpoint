@@ -128,6 +128,8 @@ export const SCHEMA_STATEMENTS: string[] = [
      approved_by  VARCHAR(255) NULL,
      approved_at  DATETIME NULL,
      applied_at   DATETIME NULL,
+     scheduled_for DATETIME NULL,
+     scheduled_by  VARCHAR(255) NULL,
      created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
      INDEX (database_id),
      FOREIGN KEY (database_id) REFERENCES \`databases\`(id) ON DELETE CASCADE
@@ -230,4 +232,6 @@ export const SCHEMA_STATEMENTS: string[] = [
 export const COLUMN_MIGRATIONS: { table: string; column: string; alter: string }[] = [
   { table: 'users', column: 'password_hash', alter: 'ADD COLUMN password_hash TEXT NULL' },
   { table: 'project_settings', column: 'allow_self_approval', alter: 'ADD COLUMN allow_self_approval TINYINT(1) NOT NULL DEFAULT 0' },
+  { table: 'migrations', column: 'scheduled_for', alter: 'ADD COLUMN scheduled_for DATETIME NULL' },
+  { table: 'migrations', column: 'scheduled_by', alter: 'ADD COLUMN scheduled_by VARCHAR(255) NULL' },
 ]

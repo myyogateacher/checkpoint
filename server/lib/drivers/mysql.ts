@@ -97,17 +97,26 @@ export const mysqlDriver: Driver = {
     if (sql.replace(/;\s*$/, '').includes(';')) throw new HttpError(400, 'Only a single statement is allowed.')
   },
 
-  // Run a read-only query and return columns + rows.
-  async runReadQuery(c, sql) {
+  // Run a read-only query and return columns + rows, bounded by timeoutMs.
+  async runReadQuery(c, sql, timeoutMs) {
     this.assertReadOnly(sql)
     const conn = await connect(c)
     const started = Date.now()
     try {
-      const [rows, fields] = await conn.query<mysql.RowDataPacket[]>(sql)
+      // Server-side cap for SELECTs (best-effort — ignored by engines/versions
+      // without max_execution_time), plus a client-side timeout that aborts the
+      // socket for anything still running (e.g. SHOW / slow network).
+      try {
+        await conn.query('SET SESSION max_execution_time = ?', [timeoutMs])
+      } catch { /* not supported on this engine/version — rely on the client timeout */ }
+      const [rows, fields] = await conn.query<mysql.RowDataPacket[]>({ sql, timeout: timeoutMs })
       const columns = (fields ?? []).map((f) => f.name)
       return { columns, rows: rows as Record<string, unknown>[], row_count: rows.length, duration_ms: Date.now() - started }
     } catch (err) {
-      throw new HttpError(400, (err as Error).message)
+      const msg = (err as Error & { code?: string }).code === 'PROTOCOL_SEQUENCE_TIMEOUT'
+        ? `Query exceeded the ${Math.round(timeoutMs / 1000)}s timeout.`
+        : (err as Error).message
+      throw new HttpError(400, msg)
     } finally {
       await conn.end()
     }

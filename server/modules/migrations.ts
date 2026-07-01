@@ -23,6 +23,8 @@ interface MigRow {
   approved_by: string | null
   approved_at: Date | null
   applied_at: Date | null
+  scheduled_for: Date | null
+  scheduled_by: string | null
   created_at: Date
   approvers: unknown
   releasers: unknown
@@ -74,6 +76,8 @@ async function fullMigration(row: MigRow) {
     approved_by: row.approved_by,
     approved_at: iso(row.approved_at),
     applied_at: iso(row.applied_at),
+    scheduled_for: iso(row.scheduled_for),
+    scheduled_by: row.scheduled_by,
     events: events.map((e) => ({ at: iso(e.at)!, actor_email: e.actor_email, action: e.action, note: e.note })),
   }
 }
@@ -85,9 +89,9 @@ async function loadMig(userId: string, id: string): Promise<MigRow> {
   return row
 }
 
-async function addEvent(migrationId: string, actor: SessionUser, action: string, note: string | null) {
+async function addEvent(migrationId: string, actorEmail: string, action: string, note: string | null) {
   await execute('INSERT INTO migration_events (id, migration_id, actor_email, action, note) VALUES (:id, :m, :a, :act, :note)', {
-    id: newId('ev'), m: migrationId, a: actor.email, act: action, note,
+    id: newId('ev'), m: migrationId, a: actorEmail, act: action, note,
   })
 }
 
@@ -96,6 +100,35 @@ const NEXT_STATUS: Record<string, MigrationStatus> = {
   approve: 'approved',
   reject: 'rejected',
   apply: 'applied',
+}
+
+// Approved migrations whose scheduled time has arrived (used by the scheduler).
+export async function dueScheduledMigrations(): Promise<MigRow[]> {
+  return query<MigRow>(
+    `${MIG_SELECT} WHERE m.status = 'approved' AND m.scheduled_for IS NOT NULL AND m.scheduled_for <= NOW()`,
+  )
+}
+
+// Apply an approved migration to its database immediately. Shared by the manual
+// apply route and the background scheduler, so it takes a plain actor email
+// (the scheduler has no session). On success the migration is marked applied and
+// any pending schedule is cleared; on failure it is marked failed and rethrows.
+export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl: string): Promise<void> {
+  if (mig.status !== 'approved') throw badRequest('Only approved migrations can be applied.')
+  const conn = await getConnectionSecret(mig.database_id, 'write')
+  if (!conn) throw badRequest('No write connection configured.')
+  const stmts = (await query<{ sql_text: string }>('SELECT sql_text FROM migration_queries WHERE migration_id = :id ORDER BY ord', { id: mig.id })).map((q) => q.sql_text)
+  try {
+    await applyStatements(mig.engine, conn, stmts)
+  } catch (err) {
+    await execute('UPDATE migrations SET status = :s WHERE id = :id', { s: 'failed', id: mig.id })
+    await addEvent(mig.id, actorEmail, 'failed', (err as Error).message)
+    throw err
+  }
+  await execute('UPDATE migrations SET status = :s, applied_at = NOW(), scheduled_for = NULL, scheduled_by = NULL WHERE id = :id', { s: 'applied', id: mig.id })
+  await addEvent(mig.id, actorEmail, 'apply', null)
+  await writeAudit({ actor: { email: actorEmail, name: actorEmail } as SessionUser, orgId: mig.org_id, action: 'migration.apply', entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `Apply migration on ${mig.db_name}` })
+  await notifyMigration(mig.org_id, 'apply', mig.id, actorEmail, baseUrl)
 }
 
 export function registerMigrations(router: Router) {
@@ -140,8 +173,8 @@ export function registerMigrations(router: Router) {
         id: newId('q'), m: id, ord: i + 1, sql: body.queries[i],
       })
     }
-    await addEvent(id, user, 'created', null)
-    if (body.submit) await addEvent(id, user, 'submitted', null)
+    await addEvent(id, user.email, 'created', null)
+    if (body.submit) await addEvent(id, user.email, 'submitted', null)
     await writeAudit({ actor: user, orgId: db.org_id, action: body.submit ? 'migration.submit' : 'migration.create', entityType: 'migration', entityId: id, entityLabel: body.title.trim(), summary: `${body.submit ? 'Submitted' : 'Created'} migration on ${db.name}` })
     if (body.submit) await notifyMigration(db.org_id, 'submit', id, user.email, env.appBaseUrl || ctx.url.origin)
     return json(await fullMigration(await loadMig(user.id, id)))
@@ -169,24 +202,18 @@ export function registerMigrations(router: Router) {
       }
       const { note } = await readJson<{ note?: string }>(ctx.req).catch(() => ({ note: undefined }))
 
+      // Apply runs the shared helper (records its own event/audit/notification and
+      // clears any pending schedule), so return straight away.
+      if (action === 'apply') {
+        await applyMigrationNow(mig, user.email, env.appBaseUrl || ctx.url.origin)
+        return json(await fullMigration(await loadMig(user.id, mig.id)))
+      }
+
       // Set when this approval meets the required-approvals threshold (drives the
       // status flip and the "approved" Slack notification).
       let becameApproved = false
 
-      if (action === 'apply') {
-        if (mig.status !== 'approved') throw badRequest('Only approved migrations can be applied.')
-        const conn = await getConnectionSecret(mig.database_id, 'write')
-        if (!conn) throw badRequest('No write connection configured.')
-        const stmts = (await query<{ sql_text: string }>('SELECT sql_text FROM migration_queries WHERE migration_id = :id ORDER BY ord', { id: mig.id })).map((q) => q.sql_text)
-        try {
-          await applyStatements(mig.engine, conn, stmts)
-        } catch (err) {
-          await execute('UPDATE migrations SET status = :s WHERE id = :id', { s: 'failed', id: mig.id })
-          await addEvent(mig.id, user, 'failed', (err as Error).message)
-          throw err
-        }
-        await execute('UPDATE migrations SET status = :s, applied_at = NOW() WHERE id = :id', { s: 'applied', id: mig.id })
-      } else if (action === 'approve') {
+      if (action === 'approve') {
         if (mig.status !== 'pending_approval') throw badRequest('Only migrations pending approval can be approved.')
         // The author may only approve their own migration when the project allows it.
         if (user.email === mig.author_email && !mig.allow_self_approval) {
@@ -209,18 +236,60 @@ export function registerMigrations(router: Router) {
           becameApproved = true
         }
         // Otherwise the migration stays pending; this approval is recorded as an event below.
+      } else if (action === 'reject') {
+        // Pending or already-approved migrations can be rejected; rejecting also
+        // clears any pending schedule so a rejected migration never auto-applies.
+        if (mig.status !== 'pending_approval' && mig.status !== 'approved') {
+          throw badRequest('Only migrations pending approval or approved can be rejected.')
+        }
+        await execute('UPDATE migrations SET status = :s, scheduled_for = NULL, scheduled_by = NULL WHERE id = :id', { s: 'rejected', id: mig.id })
       } else {
         await execute('UPDATE migrations SET status = :s WHERE id = :id', { s: NEXT_STATUS[action], id: mig.id })
       }
-      await addEvent(mig.id, user, action, note ?? null)
+      await addEvent(mig.id, user.email, action, note ?? null)
       await writeAudit({ actor: user, orgId: mig.org_id, action: `migration.${action}`, entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `${action[0].toUpperCase() + action.slice(1)} migration on ${mig.db_name}` })
-      // Notify on submit/apply, and on approve only once fully approved (threshold met).
-      if (action === 'submit' || action === 'apply' || (action === 'approve' && becameApproved)) {
+      // Notify on submit, and on approve only once fully approved (threshold met).
+      // (apply notifies from within applyMigrationNow and returns earlier.)
+      if (action === 'submit' || (action === 'approve' && becameApproved)) {
         await notifyMigration(mig.org_id, action, mig.id, user.email, env.appBaseUrl || ctx.url.origin)
       }
       return json(await fullMigration(await loadMig(user.id, mig.id)))
     })
   }
+
+  // Schedule an approved migration to auto-apply at a future datetime. Same
+  // authority as apply (admin or a designated releaser).
+  router.post('/api/migrations/:id/schedule', async (ctx: Ctx) => {
+    const user = requireUser(ctx)
+    const mig = await loadMig(user.id, ctx.params.id)
+    const releasers = asJson<string[]>(mig.releasers, [])
+    if (!can(user.role, 'approve') && !releasers.includes(user.email)) {
+      throw forbidden('Only an admin or a designated releaser can schedule this migration.')
+    }
+    if (mig.status !== 'approved') throw badRequest('Only approved migrations can be scheduled.')
+    const { scheduled_for } = await readJson<{ scheduled_for?: string }>(ctx.req)
+    const when = scheduled_for ? new Date(scheduled_for) : null
+    if (!when || Number.isNaN(when.getTime())) throw badRequest('A valid scheduled_for datetime is required.')
+    if (when.getTime() <= Date.now()) throw badRequest('The scheduled time must be in the future.')
+    await execute('UPDATE migrations SET scheduled_for = :t, scheduled_by = :by WHERE id = :id', { t: when, by: user.email, id: mig.id })
+    await addEvent(mig.id, user.email, 'scheduled', when.toISOString())
+    await writeAudit({ actor: user, orgId: mig.org_id, action: 'migration.schedule', entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `Scheduled migration on ${mig.db_name} for ${when.toISOString()}` })
+    return json(await fullMigration(await loadMig(user.id, mig.id)))
+  })
+
+  // Cancel a pending schedule (leaves the migration approved).
+  router.post('/api/migrations/:id/cancel-schedule', async (ctx: Ctx) => {
+    const user = requireUser(ctx)
+    const mig = await loadMig(user.id, ctx.params.id)
+    const releasers = asJson<string[]>(mig.releasers, [])
+    if (!can(user.role, 'approve') && !releasers.includes(user.email)) {
+      throw forbidden('Only an admin or a designated releaser can cancel this schedule.')
+    }
+    await execute('UPDATE migrations SET scheduled_for = NULL, scheduled_by = NULL WHERE id = :id', { id: mig.id })
+    await addEvent(mig.id, user.email, 'schedule_cancelled', null)
+    await writeAudit({ actor: user, orgId: mig.org_id, action: 'migration.cancel_schedule', entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `Cancelled schedule for migration on ${mig.db_name}` })
+    return json(await fullMigration(await loadMig(user.id, mig.id)))
+  })
 
   // Reviewers (replace the set).
   router.put('/api/migrations/:id/reviewers', async (ctx: Ctx) => {

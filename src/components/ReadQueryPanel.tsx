@@ -144,7 +144,7 @@ export function ReadQueryPanel({
     }
     patch(active.id, { running: true, error: null })
     try {
-      const result = await api.runReadQuery(active.databaseId, sql, querySettings?.default_timeout_seconds)
+      const result = await api.runReadQuery(active.databaseId, sql)
       patch(active.id, { result, running: false })
     } catch (err) {
       patch(active.id, { result: null, running: false, error: err instanceof Error ? err.message : 'Query failed' })

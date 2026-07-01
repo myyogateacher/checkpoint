@@ -35,8 +35,8 @@ export function assertReadOnly(engine: string, queryText: string): void {
   driverOrThrow(engine).assertReadOnly(queryText)
 }
 
-export function runReadQuery(engine: string, c: ConnectionSecret, queryText: string): Promise<QueryResult> {
-  return driverOrThrow(engine).runReadQuery(c, queryText)
+export function runReadQuery(engine: string, c: ConnectionSecret, queryText: string, timeoutMs: number): Promise<QueryResult> {
+  return driverOrThrow(engine).runReadQuery(c, queryText, timeoutMs)
 }
 
 export function applyStatements(engine: string, c: ConnectionSecret, statements: string[]): Promise<void> {

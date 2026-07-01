@@ -73,7 +73,7 @@ export function ValidationRulesPage() {
     <>
       <PageHeader
         eyebrow="Governance"
-        title="Validation Rules"
+        title="Validation Rules (Beta)"
         description="Rules enforced when a migration is created. Toggle sections or individual rules per database type."
         actions={
           <Button onClick={save} loading={saving} disabled={!sections}>

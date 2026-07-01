@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { FaCheck, FaCheckDouble, FaCommentDots, FaPlay, FaPlus, FaTimes, FaUserCheck } from 'react-icons/fa'
+import { FaCheck, FaCheckDouble, FaClock, FaCommentDots, FaPlay, FaPlus, FaTimes, FaUserCheck } from 'react-icons/fa'
 import { api } from '../services/api'
 import type { ManagedUser, Migration } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -9,6 +9,7 @@ import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
 import { EngineBadge, StatusBadge } from '../components/badges'
 import { Dropdown } from '../components/Dropdown'
+import { DateTimePicker } from '../components/DateTimePicker'
 import { Button, Card, EmptyState, ErrorBanner, Modal, Spinner, TextArea } from '../components/ui'
 
 const ACTION_TOAST: Record<string, string> = {
@@ -16,6 +17,12 @@ const ACTION_TOAST: Record<string, string> = {
   approve: 'Migration approved',
   reject: 'Migration rejected',
   apply: 'Migration applied to the database',
+}
+
+// Local datetime string (YYYY-MM-DDTHH:mm) for a datetime-local input's value/min.
+function localDateTimeValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 export function MigrationDetailPage() {
@@ -27,6 +34,8 @@ export function MigrationDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectNote, setRejectNote] = useState('')
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduleAt, setScheduleAt] = useState('')
   const [commentBody, setCommentBody] = useState('')
   const [posting, setPosting] = useState(false)
 
@@ -92,6 +101,49 @@ export function MigrationDetailPage() {
     }
   }
 
+  function openSchedule() {
+    // Default to one hour from now, rounded down to the minute.
+    const d = new Date(Date.now() + 60 * 60 * 1000)
+    d.setSeconds(0, 0)
+    setScheduleAt(localDateTimeValue(d))
+    setScheduleOpen(true)
+  }
+
+  async function schedule() {
+    if (!scheduleAt) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await api.scheduleMigration(migrationId, new Date(scheduleAt).toISOString())
+      setMigration(updated)
+      setScheduleOpen(false)
+      setScheduleAt('')
+      notify.success('Migration scheduled')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to schedule'
+      setError(msg)
+      notify.error(msg)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function cancelSchedule() {
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await api.cancelMigrationSchedule(migrationId)
+      setMigration(updated)
+      notify.success('Schedule cancelled')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to cancel schedule'
+      setError(msg)
+      notify.error(msg)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (migration === null) {
     return (
       <Card className="p-6">
@@ -136,12 +188,36 @@ export function MigrationDetailPage() {
       )
     }
   }
-  if (migration.status === 'approved' && canApply) {
-    actions.push(
-      <Button key="apply" onClick={() => transition('apply')} loading={busy}>
-        <FaPlay size={11} /> Apply to database
-      </Button>,
-    )
+  const isScheduled = migration.status === 'approved' && !!migration.scheduled_for
+  if (migration.status === 'approved') {
+    // Approvers/admins may reject an already-approved migration.
+    if (canApproveMig) {
+      actions.push(
+        <Button key="reject" variant="danger" onClick={() => setRejectOpen(true)} disabled={busy}>
+          <FaTimes size={11} /> Reject
+        </Button>,
+      )
+    }
+    if (canApply) {
+      if (isScheduled) {
+        actions.push(
+          <Button key="cancel-schedule" variant="secondary" onClick={cancelSchedule} disabled={busy}>
+            <FaTimes size={11} /> Cancel Schedule
+          </Button>,
+        )
+      } else {
+        actions.push(
+          <Button key="schedule" variant="secondary" onClick={openSchedule} disabled={busy}>
+            <FaClock size={11} /> Schedule Migration
+          </Button>,
+        )
+      }
+      actions.push(
+        <Button key="apply" onClick={() => transition('apply')} loading={busy}>
+          <FaPlay size={11} /> Apply Migration
+        </Button>,
+      )
+    }
   }
 
   return (
@@ -244,6 +320,12 @@ export function MigrationDetailPage() {
               <Meta label="Author">{migration.author_email}</Meta>
               <Meta label="Created">{formatDate(migration.created_at)}</Meta>
               <Meta label="Approved by">{migration.approved_by ?? '—'}</Meta>
+              {migration.scheduled_for ? (
+                <>
+                  <Meta label="Scheduled">{formatDate(migration.scheduled_for)}</Meta>
+                  <Meta label="Scheduled by">{migration.scheduled_by ?? '—'}</Meta>
+                </>
+              ) : null}
               <Meta label="Applied">{formatDate(migration.applied_at)}</Meta>
             </dl>
 
@@ -372,6 +454,33 @@ export function MigrationDetailPage() {
           onChange={(e) => setRejectNote(e.target.value)}
           placeholder="Reason for rejection (shared with the author)"
         />
+      </Modal>
+
+      <Modal
+        open={scheduleOpen}
+        title="Schedule migration"
+        onClose={() => setScheduleOpen(false)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setScheduleOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={schedule}
+              loading={busy}
+              disabled={!scheduleAt || new Date(scheduleAt).getTime() <= Date.now()}
+            >
+              <FaClock size={11} /> Schedule migration
+            </Button>
+          </>
+        }
+      >
+        <div>
+          <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">
+            The migration will be applied automatically at the selected date and time.
+          </p>
+          <DateTimePicker value={scheduleAt} onChange={setScheduleAt} min={new Date()} />
+        </div>
       </Modal>
     </>
   )

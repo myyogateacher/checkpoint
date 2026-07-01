@@ -112,7 +112,7 @@ export const redisDriver: Driver = {
     }
   },
 
-  async runReadQuery(c, text) {
+  async runReadQuery(c, text, timeoutMs) {
     this.assertReadOnly(text)
     const [command, ...args] = tokenize(text.trim())
     const client = makeClient(c)
@@ -124,7 +124,11 @@ export const redisDriver: Driver = {
     }
     const started = Date.now()
     try {
-      const reply = await client.send(command, args.map(String))
+      // Bound the command: whichever settles first wins.
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new HttpError(400, `Command exceeded the ${Math.round(timeoutMs / 1000)}s timeout.`)), timeoutMs),
+      )
+      const reply = await Promise.race([client.send(command, args.map(String)), timeout])
       return toResult(command, reply, Date.now() - started)
     } catch (err) {
       if (err instanceof HttpError) throw err

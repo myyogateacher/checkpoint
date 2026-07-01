@@ -215,6 +215,9 @@ export interface Migration {
   approved_by: string | null
   approved_at: string | null
   applied_at: string | null
+  // Set while an approved migration is queued to auto-apply at a future time.
+  scheduled_for: string | null
+  scheduled_by: string | null
   events: MigrationEvent[]
 }
 

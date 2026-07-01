@@ -35,8 +35,9 @@ export interface Driver {
   introspect?(c: ConnectionSecret): Promise<TableDef[]>
   // Throw HttpError(400) if the text is not a single read-only statement/command.
   assertReadOnly(queryText: string): void
-  // Run a read-only query and return tabular results.
-  runReadQuery(c: ConnectionSecret, queryText: string): Promise<QueryResult>
+  // Run a read-only query and return tabular results. `timeoutMs` bounds how long
+  // the statement may run before it is aborted.
+  runReadQuery(c: ConnectionSecret, queryText: string, timeoutMs: number): Promise<QueryResult>
   // Apply ordered write statements (migrations). Omit for engines without DDL.
   applyStatements?(c: ConnectionSecret, statements: string[]): Promise<void>
 }
