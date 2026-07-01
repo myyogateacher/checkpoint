@@ -29,11 +29,9 @@ Always run `bun run typecheck` after changes. `tsconfig` has `noUnusedLocals` /
 - **Domain model:** [`src/types.ts`](src/types.ts) is the single source of truth
   and effectively the API contract. Update it first when changing data shapes.
 - **Data access:** all network access goes through the `api` object in
-  [`src/services/api.ts`](src/services/api.ts). Every method has two branches
-  gated by `const USE_MOCKS`: a real `request<T>(path, …)` call and a mock branch
-  that mutates [`src/services/mockData.ts`](src/services/mockData.ts). When you
-  add an endpoint, add **both** branches and keep the real path accurate — that
-  path is the backend contract.
+  [`src/services/api.ts`](src/services/api.ts). Each method issues a
+  `request<T>(path, …)` call; when you add an endpoint, keep the path accurate —
+  that path is the backend contract.
 - **Pages** live in `src/pages/` (one per screen). **Reusable UI** lives in
   `src/components/`. **Primitives** (Button, Card, Modal, Field, inputs,
   Spinner, EmptyState, ErrorBanner) are in
@@ -84,10 +82,9 @@ errors** in the log buffer — a server restart clears them; trust `typecheck` +
 
 1. Implement the routes listed in [`docs/features.md`](docs/features.md) (they
    mirror the `request<T>(…)` paths in `api.ts`).
-2. Flip `USE_MOCKS` to `false` in `api.ts`.
-3. `request<T>` already sends `credentials: 'include'` and expects JSON with an
+2. `request<T>` already sends `credentials: 'include'` and expects JSON with an
    `{ error }` field on failure — match that shape.
-4. Secrets (connection passwords, SMTP password) are **write-only** from the
+3. Secrets (connection passwords, SMTP password) are **write-only** from the
    client: the UI sends a value to set/replace and only ever receives a
    `has_password` boolean back. Never return secrets.
 

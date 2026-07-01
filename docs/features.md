@@ -69,9 +69,6 @@ Roles: `admin`, `editor`, `viewer`. The client gates UI via
 - Session: signed, httpOnly cookie. On first successful login, record
   `last_login_at`.
 
-> The mock uses `mockSignIn()` / localStorage — that is dev-only and goes away
-> when `USE_MOCKS=false`.
-
 ---
 
 ## 4. Data model (suggested metadata store)

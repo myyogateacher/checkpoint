@@ -2,23 +2,25 @@ import { useEffect, useMemo, useState } from 'react'
 import { FaSearch } from 'react-icons/fa'
 import { api } from '../services/api'
 import type { DatabaseEngine } from '../types'
-import { ENGINE_LABELS } from '../lib/format'
+import { ENGINE_LABELS, can } from '../lib/format'
 import { CATEGORY_LABELS, ENGINES, engineDot, type EngineCategory } from '../lib/engines'
 import { RULE_ENGINES, type ValidationSection } from '../lib/validationRules'
+import { useAuth } from '../context/AuthContext'
 import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
 import { Button, Card, Spinner, TextInput } from '../components/ui'
 
 const CATEGORY_ORDER: EngineCategory[] = ['relational', 'analytics', 'nosql']
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition ${
+      className={`relative h-5 w-9 shrink-0 rounded-full transition ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'} ${
         checked ? 'bg-gradient-to-r from-blue-600 to-indigo-600' : 'bg-slate-300 dark:bg-slate-600'
       }`}
     >
@@ -28,6 +30,10 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export function ValidationRulesPage() {
+  const { user } = useAuth()
+  // Saving requires the manage_users capability (see server); everyone else —
+  // including viewers — sees the rules read-only.
+  const editable = can(user?.role, 'manage_users')
   const [engine, setEngine] = useState<DatabaseEngine>(RULE_ENGINES[0])
   const [sections, setSections] = useState<ValidationSection[] | null>(null)
   const [saving, setSaving] = useState(false)
@@ -74,11 +80,17 @@ export function ValidationRulesPage() {
       <PageHeader
         eyebrow="Governance"
         title="Validation Rules (Beta)"
-        description="Rules enforced when a migration is created. Toggle sections or individual rules per database type."
+        description={
+          editable
+            ? 'Rules enforced when a migration is created. Toggle sections or individual rules per database type.'
+            : 'Rules enforced when a migration is created. Read-only — your role can’t change validation rules.'
+        }
         actions={
-          <Button onClick={save} loading={saving} disabled={!sections}>
-            Save changes
-          </Button>
+          editable ? (
+            <Button onClick={save} loading={saving} disabled={!sections}>
+              Save changes
+            </Button>
+          ) : undefined
         }
       />
 
@@ -137,13 +149,13 @@ export function ValidationRulesPage() {
             <Card key={section.id} className="overflow-hidden p-0">
               <div className="flex items-center justify-between gap-3 border-b border-slate-200/60 px-5 py-3">
                 <h2 className="text-sm font-semibold text-slate-800">{section.title}</h2>
-                <Toggle checked={section.enabled} onChange={(v) => patchSection(section.id, (s) => ({ ...s, enabled: v }))} />
+                <Toggle checked={section.enabled} disabled={!editable} onChange={(v) => patchSection(section.id, (s) => ({ ...s, enabled: v }))} />
               </div>
               <div className={`divide-y divide-slate-200/50 ${section.enabled ? '' : 'pointer-events-none opacity-50'}`}>
                 {section.rules.map((rule) => (
                   <div key={rule.id} className="flex items-start gap-3 px-5 py-3">
                     <div className="pt-0.5">
-                      <Toggle checked={rule.enabled} onChange={(v) => setRule(section.id, rule.id, { enabled: v })} />
+                      <Toggle checked={rule.enabled} disabled={!editable} onChange={(v) => setRule(section.id, rule.id, { enabled: v })} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-slate-800 dark:text-slate-100">{rule.title}</p>
@@ -159,6 +171,7 @@ export function ValidationRulesPage() {
                           <TextInput
                             value={rule.currentValue ?? rule.value.default}
                             onChange={(e) => setRule(section.id, rule.id, { currentValue: e.target.value })}
+                            disabled={!editable}
                             className="!w-28 !py-1 text-sm"
                           />
                           {rule.value.unit ? <span className="text-xs text-slate-400">{rule.value.unit}</span> : null}
