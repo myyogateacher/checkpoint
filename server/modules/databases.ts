@@ -4,7 +4,7 @@ import { requireUser, requireCapability, userOrgIds, assertOrgMember } from '../
 import { newId } from '../lib/ids'
 import { encryptSecret } from '../lib/crypto'
 import { writeAudit } from '../lib/audit'
-import { DB_SELECT, loadDb, serializeDb, getConnectionSecret, type DbRow } from './databases.repo'
+import { DB_SELECT, loadDb, serializeDb, getConnectionSecret, pullSchema, type DbRow } from './databases.repo'
 import { testConnection } from '../lib/externalDb'
 import { HttpError } from '../lib/http'
 
@@ -75,6 +75,16 @@ export function registerDatabases(router: Router) {
     await upsertConnection(id, 'read', body.read)
     await upsertConnection(id, 'write', body.write)
     await writeAudit({ actor: user, orgId: org_id, action: 'database.create', entityType: 'database', entityId: id, entityLabel: body.name, summary: `Added database ${body.name} (${body.engine})` })
+
+    // Auto-pull the schema so tables show up right after adding, without a manual
+    // sync. Best-effort: a bad/unreachable read connection must not fail the create.
+    const created = await loadDb(user.id, id)
+    try {
+      const { tables } = await pullSchema(created)
+      await writeAudit({ actor: user, orgId: org_id, action: 'schema.sync', entityType: 'database', entityId: id, entityLabel: body.name, summary: `Pulled schema from ${body.name} — ${tables.length} tables` })
+    } catch (err) {
+      console.error(`[databases] auto schema pull failed for ${id}: ${(err as Error).message}`)
+    }
     return json(await serializeDb(await loadDb(user.id, id)))
   })
 

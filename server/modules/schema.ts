@@ -1,10 +1,9 @@
-import { type Router, type Ctx, json, badRequest } from '../lib/http'
-import { execute, queryOne } from '../db/pool'
+import { type Router, type Ctx, json } from '../lib/http'
+import { queryOne } from '../db/pool'
 import { requireUser, requireCapability } from '../lib/auth'
 import { asJson, iso } from '../lib/serialize'
 import { writeAudit } from '../lib/audit'
-import { loadDb, getConnectionSecret } from './databases.repo'
-import { introspect } from '../lib/externalDb'
+import { loadDb, pullSchema } from './databases.repo'
 
 export function registerSchema(router: Router) {
   // Latest cached schema snapshot (or null when never synced).
@@ -23,18 +22,9 @@ export function registerSchema(router: Router) {
   router.post('/api/databases/:id/schema/sync', async (ctx: Ctx) => {
     const user = requireCapability(ctx, 'edit')
     const db = await loadDb(user.id, ctx.params.id)
-    const conn = await getConnectionSecret(db.id, 'read')
-    if (!conn) throw badRequest('No read connection configured.')
 
-    const tables = await introspect(db.engine, conn)
-    const now = new Date()
-    await execute(
-      `INSERT INTO schema_snapshots (database_id, synced_at, payload) VALUES (:id, :at, :payload)
-       ON DUPLICATE KEY UPDATE synced_at = :at, payload = :payload`,
-      { id: db.id, at: now, payload: JSON.stringify(tables) },
-    )
-    await execute('UPDATE `databases` SET last_synced_at = :at WHERE id = :id', { at: now, id: db.id })
+    const { tables, syncedAt } = await pullSchema(db)
     await writeAudit({ actor: user, orgId: db.org_id, action: 'schema.sync', entityType: 'database', entityId: db.id, entityLabel: db.name, summary: `Pulled schema from ${db.name} — ${tables.length} tables` })
-    return json({ database_id: db.id, synced_at: now.toISOString(), tables })
+    return json({ database_id: db.id, synced_at: syncedAt.toISOString(), tables })
   })
 }

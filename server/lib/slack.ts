@@ -143,12 +143,14 @@ async function loadMigrationInfo(migrationId: string): Promise<MigrationInfo | u
     releasers: unknown
   }>(
     `SELECT m.title, m.description, d.name AS db_name, p.name AS project_name, e.name AS env_name,
-            ps.approvers AS approvers, ps.releasers AS releasers
+            COALESCE(pes.approvers, ps.approvers) AS approvers,
+            COALESCE(pes.releasers, ps.releasers) AS releasers
        FROM migrations m
        JOIN \`databases\` d ON d.id = m.database_id
        JOIN projects p ON p.id = d.project_id
        LEFT JOIN environments e ON e.id = d.environment_id
        LEFT JOIN project_settings ps ON ps.project_id = p.id
+       LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id
       WHERE m.id = :id`,
     { id: migrationId },
   )

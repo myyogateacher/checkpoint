@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { FaCheckDouble, FaRocket, FaUserCheck, FaUserShield } from 'react-icons/fa'
+import { FaCheckDouble, FaLayerGroup, FaRocket, FaUserCheck, FaUserShield } from 'react-icons/fa'
 import { api } from '../services/api'
-import type { ManagedUser, ProjectSettings } from '../types'
+import type { Environment, ManagedUser, ProjectSettings } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { can } from '../lib/format'
 import { notify } from '../lib/toast'
@@ -28,33 +28,71 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   )
 }
 
+// Scope for the governance rules being viewed/edited: the project-wide defaults,
+// or one environment's override of them.
+const DEFAULT_SCOPE = ''
+
 export function ProjectSettingsPage() {
   const project = useProject()
   const { user } = useAuth()
-  const editable = can(user?.role, 'manage_users')
+  const isAdmin = can(user?.role, 'manage_users')
+  const [environments, setEnvironments] = useState<Environment[]>([])
+  const [scope, setScope] = useState<string>(DEFAULT_SCOPE) // '' = project defaults, else env id
   const [settings, setSettings] = useState<ProjectSettings | null>(null)
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    setSettings(null)
-    void api.getProjectSettings(project.id).then(setSettings)
+    void api.getEnvironments(project.id).then(setEnvironments)
     void api.getUsers().then(setUsers)
   }, [project.id])
+
+  useEffect(() => {
+    setSettings(null)
+    void api.getProjectSettings(project.id, scope || undefined).then(setSettings)
+  }, [project.id, scope])
+
+  // An environment scope that inherits stays read-only until the admin explicitly
+  // creates an override, so defaults aren't forked by accident.
+  const inherited = Boolean(scope && settings?.inherited)
+  const editable = isAdmin && !inherited
 
   async function save() {
     if (!settings) return
     setSaving(true)
     try {
-      const saved = await api.saveProjectSettings(project.id, settings)
+      const saved = await api.saveProjectSettings(project.id, settings, scope || undefined)
       setSettings(saved)
-      notify.success('Project settings saved')
+      notify.success(scope ? `Settings saved for ${envName(scope)}` : 'Project settings saved')
     } catch (err) {
       notify.error(err instanceof Error ? err.message : 'Failed to save settings')
     } finally {
       setSaving(false)
     }
   }
+
+  async function resetOverride() {
+    if (!scope) return
+    setSaving(true)
+    try {
+      await api.resetProjectEnvSettings(project.id, scope)
+      setSettings(await api.getProjectSettings(project.id, scope))
+      notify.success(`${envName(scope)} now inherits the project defaults`)
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : 'Failed to reset override')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function envName(envId: string): string {
+    return environments.find((e) => e.id === envId)?.name ?? 'environment'
+  }
+
+  const scopeOptions = [
+    { value: DEFAULT_SCOPE, label: 'Project defaults' },
+    ...environments.map((e) => ({ value: e.id, label: e.name })),
+  ]
 
   if (!settings) {
     return (
@@ -74,15 +112,48 @@ export function ProjectSettingsPage() {
 
   return (
     <div className="space-y-4">
+      <Card className="p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <FaLayerGroup className="text-violet-500" />
+          <h2 className="text-sm font-semibold text-slate-800">Rules scope</h2>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Field label="Environment" hint="Rules apply per environment. Environments without an override inherit the project defaults.">
+            <Dropdown value={scope} options={scopeOptions} onChange={setScope} className="w-56" />
+          </Field>
+          {scope ? (
+            inherited ? (
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-slate-500">Inheriting project defaults.</p>
+                {isAdmin ? (
+                  <Button variant="secondary" onClick={() => setSettings((s) => (s ? { ...s, inherited: false } : s))}>
+                    Override for {envName(scope)}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-slate-500">Overriding project defaults.</p>
+                {isAdmin ? (
+                  <Button variant="secondary" onClick={resetOverride} loading={saving}>
+                    Reset to project defaults
+                  </Button>
+                ) : null}
+              </div>
+            )
+          ) : null}
+        </div>
+      </Card>
+
       {editable ? (
         <div className="flex justify-end">
           <Button onClick={save} loading={saving}>
-            Save changes
+            {scope ? `Save for ${envName(scope)}` : 'Save changes'}
           </Button>
         </div>
-      ) : (
+      ) : !isAdmin ? (
         <p className="text-sm text-slate-500">You have read-only access to these settings.</p>
-      )}
+      ) : null}
 
       <Card className="p-5">
         <div className="mb-3 flex items-center gap-2">
@@ -90,7 +161,8 @@ export function ProjectSettingsPage() {
           <h2 className="text-sm font-semibold text-slate-800">Approvers</h2>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          Users who may approve migrations in {project.name}.
+          Users who may approve migrations in {project.name}
+          {scope ? ` / ${envName(scope)}` : ''}.
         </p>
         <UserMultiSelect
           users={users}

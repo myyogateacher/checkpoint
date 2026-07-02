@@ -7,6 +7,7 @@ import { writeAudit } from '../lib/audit'
 import { getConnectionSecret } from './databases.repo'
 import { applyStatements } from '../lib/externalDb'
 import { notifyMigration } from '../lib/slack'
+import { checkSyntax } from '../lib/sqlSyntax'
 import { env } from '../env'
 import type { MigrationStatus, SessionUser } from '../types'
 
@@ -20,6 +21,12 @@ const ALL_USERS = '*'
 // or the list must contain the ALL_USERS sentinel.
 function canRelease(releasers: string[], user: SessionUser): boolean {
   return can(user.role, 'approve') || releasers.includes(ALL_USERS) || releasers.includes(user.email)
+}
+
+// Approval threshold semantics: no settings row → the default of 1; an explicit
+// 0 means "no approval needed" and must not be coerced up.
+function requiredApprovals(v: number | null | undefined): number {
+  return v == null ? 1 : Math.max(0, Number(v))
 }
 
 interface MigRow {
@@ -44,13 +51,19 @@ interface MigRow {
   allow_self_approval: number | null
 }
 
+// Governance is resolved per environment: a project_env_settings row for the
+// database's environment overrides the project-wide project_settings row.
 const MIG_SELECT = `
   SELECT m.*, d.name AS db_name, d.engine, p.org_id,
-         ps.approvers, ps.releasers, ps.required_approvals, ps.allow_self_approval
+         COALESCE(pes.approvers, ps.approvers) AS approvers,
+         COALESCE(pes.releasers, ps.releasers) AS releasers,
+         COALESCE(pes.required_approvals, ps.required_approvals) AS required_approvals,
+         COALESCE(pes.allow_self_approval, ps.allow_self_approval) AS allow_self_approval
   FROM migrations m
   JOIN \`databases\` d ON d.id = m.database_id
   JOIN projects p ON p.id = d.project_id
-  LEFT JOIN project_settings ps ON ps.project_id = p.id`
+  LEFT JOIN project_settings ps ON ps.project_id = p.id
+  LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id`
 
 async function fullMigration(row: MigRow) {
   const queries = await query<{ id: string; ord: number; sql_text: string }>(
@@ -80,7 +93,7 @@ async function fullMigration(row: MigRow) {
     author_email: row.author_email,
     approvers: asJson<string[]>(row.approvers, []),
     releasers: asJson<string[]>(row.releasers, []),
-    required_approvals: Math.max(0, Number(row.required_approvals) || 0),
+    required_approvals: requiredApprovals(row.required_approvals),
     reviewers: reviewers.map((r) => r.reviewer_email),
     queries: queries.map((q) => ({ id: q.id, order: Number(q.ord), sql: q.sql_text })),
     comments: comments.map((c) => ({ id: c.id, author_email: c.author_email, author_name: c.author_name, body: c.body, created_at: iso(c.created_at)! })),
@@ -168,16 +181,29 @@ export function registerMigrations(router: Router) {
     const user = requireCapability(ctx, 'edit')
     const body = await readJson<{ database_id: string; title: string; description: string | null; queries: string[]; submit: boolean }>(ctx.req)
     if (!body.database_id || !body.title?.trim() || !body.queries?.length) throw badRequest('database_id, title and queries are required.')
-    const db = await queryOne<{ org_id: string; name: string; required_approvals: number | null }>(
-      'SELECT p.org_id, d.name, ps.required_approvals FROM `databases` d JOIN projects p ON p.id = d.project_id LEFT JOIN project_settings ps ON ps.project_id = p.id WHERE d.id = :id',
+    const db = await queryOne<{ org_id: string; name: string; engine: string; required_approvals: number | null }>(
+      `SELECT p.org_id, d.name, d.engine,
+              COALESCE(pes.required_approvals, ps.required_approvals) AS required_approvals
+         FROM \`databases\` d
+         JOIN projects p ON p.id = d.project_id
+         LEFT JOIN project_settings ps ON ps.project_id = p.id
+         LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id
+        WHERE d.id = :id`,
       { id: body.database_id },
     )
     if (!db) throw badRequest('Unknown database.')
     await assertOrgMember(user.id, db.org_id)
 
+    // Reject statements that don't parse for the target engine (engines without
+    // a grammar are skipped). The client runs the same check for inline feedback.
+    for (let i = 0; i < body.queries.length; i++) {
+      const syntaxError = checkSyntax(body.queries[i].trim(), db.engine)
+      if (syntaxError) throw badRequest(`Statement ${i + 1}: ${syntaxError}`)
+    }
+
     // When the project requires 0 approvals, a submitted migration is approved
     // immediately (ready to release) rather than waiting in pending_approval.
-    const required = Math.max(0, Number(db.required_approvals) || 0)
+    const required = requiredApprovals(db.required_approvals)
     const autoApproved = body.submit && required === 0
     const id = newId('m')
     const status: MigrationStatus = !body.submit ? 'draft' : autoApproved ? 'approved' : 'pending_approval'
@@ -248,7 +274,7 @@ export function registerMigrations(router: Router) {
           "SELECT COUNT(DISTINCT actor_email) AS approvals FROM migration_events WHERE migration_id = :id AND action = 'approve'",
           { id: mig.id },
         )
-        const required = Math.max(0, Number(mig.required_approvals) || 0)
+        const required = requiredApprovals(mig.required_approvals)
         if (Number(approvals) + 1 >= required) {
           await execute('UPDATE migrations SET status = :s, approved_by = :by, approved_at = NOW() WHERE id = :id', { s: 'approved', by: user.email, id: mig.id })
           becameApproved = true
@@ -263,7 +289,7 @@ export function registerMigrations(router: Router) {
         await execute('UPDATE migrations SET status = :s, scheduled_for = NULL, scheduled_by = NULL WHERE id = :id', { s: 'rejected', id: mig.id })
       } else {
         // submit: when the project requires 0 approvals, go straight to approved.
-        const required = Math.max(0, Number(mig.required_approvals) || 0)
+        const required = requiredApprovals(mig.required_approvals)
         if (required === 0) {
           await execute('UPDATE migrations SET status = :s, approved_at = NOW() WHERE id = :id', { s: 'approved', id: mig.id })
           becameApproved = true

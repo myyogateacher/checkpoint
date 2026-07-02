@@ -27,10 +27,23 @@ export type Migration = {
 }
 
 export const MIGRATIONS: Migration[] = [
-  // Example — copy this shape for the first real migration and delete the sample:
-  // {
-  //   version: 2,
-  //   name: 'add_user_timezone',
-  //   statements: ['ALTER TABLE `users` ADD COLUMN `timezone` VARCHAR(64) NULL'],
-  // },
+  {
+    version: 2,
+    name: 'project_env_settings',
+    statements: [
+      // Per-environment overrides of a project's migration governance. When a row
+      // exists for (project, environment) it wins over project_settings.
+      `CREATE TABLE IF NOT EXISTS project_env_settings (
+         project_id          VARCHAR(40) NOT NULL,
+         environment_id      VARCHAR(40) NOT NULL,
+         approvers           JSON NOT NULL,
+         releasers           JSON NOT NULL,
+         required_approvals  INT NOT NULL DEFAULT 1,
+         allow_self_approval TINYINT(1) NOT NULL DEFAULT 0,
+         PRIMARY KEY (project_id, environment_id),
+         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+         FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    ],
+  },
 ]

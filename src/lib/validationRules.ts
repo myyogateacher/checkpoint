@@ -25,7 +25,7 @@ export interface ValidationSection {
   rules: ValidationRule[]
 }
 
-type Profile = 'postgres' | 'mysql' | 'oracle' | 'sqlserver' | 'clickhouse' | 'warehouse' | 'cassandra'
+type Profile = 'postgres' | 'mysql' | 'clickhouse' | 'cassandra'
 
 const ENGINE_PROFILE: Record<string, Profile> = {
   postgres: 'postgres',
@@ -37,13 +37,7 @@ const ENGINE_PROFILE: Record<string, Profile> = {
   mariadb: 'mysql',
   tidb: 'mysql',
   starrocks: 'mysql',
-  oracle: 'oracle',
-  sqlserver: 'sqlserver',
   clickhouse: 'clickhouse',
-  snowflake: 'warehouse',
-  bigquery: 'warehouse',
-  databricks: 'warehouse',
-  hive: 'warehouse',
   cassandra: 'cassandra',
 }
 
@@ -173,21 +167,9 @@ const PERFORMANCE: Record<Profile, ValidationRule[]> = {
     },
     { id: 'lock-timeout', title: 'Set a lock wait timeout', description: 'Avoid blocking on metadata locks indefinitely.', value: { default: '5s' }, enabled: true },
   ],
-  oracle: [
-    { id: 'oracle-online', title: 'Use ONLINE for index DDL', description: 'CREATE/ALTER INDEX … ONLINE avoids blocking DML.', example: 'CREATE INDEX emp_idx ON emp (dept_id) ONLINE;', enabled: true },
-    { id: 'oracle-no-long-alter', title: 'Avoid long ALTER on large tables', description: 'Use online redefinition (DBMS_REDEFINITION) for big changes.', enabled: false },
-  ],
-  sqlserver: [
-    { id: 'mssql-online', title: 'Use WITH (ONLINE = ON)', description: 'Online index operations avoid blocking on Enterprise edition.', example: 'CREATE INDEX ix_users_email ON users (email) WITH (ONLINE = ON);', enabled: true },
-    { id: 'lock-timeout', title: 'Set a lock timeout', description: 'SET LOCK_TIMEOUT to fail fast on blocking.', value: { default: '5000ms' }, enabled: true },
-  ],
   clickhouse: [
     { id: 'ch-on-cluster', title: 'Run DDL ON CLUSTER', description: 'Distributed DDL should target the cluster, not a single node.', example: 'ALTER TABLE events ON CLUSTER main ADD COLUMN session_id UUID;', enabled: true },
     { id: 'ch-no-optimize-final', title: 'Avoid OPTIMIZE … FINAL', description: 'OPTIMIZE FINAL in a migration can be extremely expensive.', enabled: true },
-  ],
-  warehouse: [
-    { id: 'wh-no-row-updates', title: 'Avoid row-level UPDATE/DELETE', description: 'Warehouses are columnar — prefer set-based loads over row mutations.', enabled: true },
-    { id: 'wh-cluster-keys', title: 'Define partition/cluster keys', description: 'Large tables should declare clustering/partitioning for scan pruning.', enabled: false },
   ],
   cassandra: [
     { id: 'cql-no-allow-filtering', title: 'Disallow ALLOW FILTERING', description: 'ALLOW FILTERING scans the whole table — model the query instead.', enabled: true },

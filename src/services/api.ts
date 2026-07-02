@@ -92,13 +92,23 @@ export const api = {
   getProject(projectId: string): Promise<Project | undefined> {
     return request<Project>(`/api/projects/${projectId}`)
   },
-  getProjectSettings(projectId: string): Promise<ProjectSettings> {
-    return request<ProjectSettings>(`/api/projects/${projectId}/settings`)
+  // With environmentId, reads/writes that environment's override (the response's
+  // `inherited` flag says whether the values fall back to the project defaults).
+  getProjectSettings(projectId: string, environmentId?: string): Promise<ProjectSettings> {
+    const q = environmentId ? `?environment=${encodeURIComponent(environmentId)}` : ''
+    return request<ProjectSettings>(`/api/projects/${projectId}/settings${q}`)
   },
-  saveProjectSettings(projectId: string, next: ProjectSettings): Promise<ProjectSettings> {
-    return request<ProjectSettings>(`/api/projects/${projectId}/settings`, {
+  saveProjectSettings(projectId: string, next: ProjectSettings, environmentId?: string): Promise<ProjectSettings> {
+    const q = environmentId ? `?environment=${encodeURIComponent(environmentId)}` : ''
+    return request<ProjectSettings>(`/api/projects/${projectId}/settings${q}`, {
       method: 'PUT',
       body: JSON.stringify(next),
+    })
+  },
+  // Remove an environment's override so it inherits the project defaults again.
+  resetProjectEnvSettings(projectId: string, environmentId: string): Promise<void> {
+    return request<void>(`/api/projects/${projectId}/settings?environment=${encodeURIComponent(environmentId)}`, {
+      method: 'DELETE',
     })
   },
   getEnvironments(projectId: string): Promise<Environment[]> {

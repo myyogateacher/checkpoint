@@ -1,8 +1,9 @@
-import { query, queryOne } from '../db/pool'
-import { notFound } from '../lib/http'
+import { query, queryOne, execute } from '../db/pool'
+import { notFound, badRequest } from '../lib/http'
 import { assertOrgMember } from '../lib/auth'
 import { asJson, bool, iso } from '../lib/serialize'
 import { decryptSecret } from '../lib/crypto'
+import { introspect } from '../lib/externalDb'
 
 export interface ConnectionSecret {
   host: string
@@ -55,10 +56,28 @@ interface ConnRow {
 
 export const DB_SELECT = `
   SELECT d.*, p.org_id,
-    COALESCE(JSON_LENGTH(s.payload, '$.tables'), 0) AS table_count
+    COALESCE(JSON_LENGTH(s.payload), 0) AS table_count
   FROM \`databases\` d
   JOIN projects p ON p.id = d.project_id
   LEFT JOIN schema_snapshots s ON s.database_id = d.id`
+
+// Introspect the database via its read connection and cache the snapshot. Returns
+// the pulled tables + timestamp. Throws if no read connection exists or the pull
+// fails (callers decide whether that's fatal). The payload is a top-level JSON
+// array of tables — table_count above reads JSON_LENGTH(payload) accordingly.
+export async function pullSchema(db: DbRow): Promise<{ tables: Awaited<ReturnType<typeof introspect>>; syncedAt: Date }> {
+  const conn = await getConnectionSecret(db.id, 'read')
+  if (!conn) throw badRequest('No read connection configured.')
+  const tables = await introspect(db.engine, conn)
+  const now = new Date()
+  await execute(
+    `INSERT INTO schema_snapshots (database_id, synced_at, payload) VALUES (:id, :at, :payload)
+     ON DUPLICATE KEY UPDATE synced_at = :at, payload = :payload`,
+    { id: db.id, at: now, payload: JSON.stringify(tables) },
+  )
+  await execute('UPDATE `databases` SET last_synced_at = :at WHERE id = :id', { at: now, id: db.id })
+  return { tables, syncedAt: now }
+}
 
 // Resolve a database the user may access (membership-checked).
 export async function loadDb(userId: string, dbId: string): Promise<DbRow> {

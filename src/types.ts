@@ -13,16 +13,9 @@ export type DatabaseEngine =
   | 'aurora_mysql'
   | 'mariadb'
   | 'tidb'
-  // Relational (other)
-  | 'oracle'
-  | 'sqlserver'
   // Analytics / warehouse
   | 'clickhouse'
-  | 'snowflake'
-  | 'bigquery'
   | 'redshift'
-  | 'hive'
-  | 'databricks'
   | 'starrocks'
   | 'elasticsearch'
   // NoSQL
@@ -87,6 +80,9 @@ export interface ProjectSettings {
   required_approvals: number
   // When true, a migration's author may approve their own migration.
   allow_self_approval: boolean
+  // Present when fetched for a specific environment: true when the environment
+  // has no override of its own and these values come from the project defaults.
+  inherited?: boolean
 }
 
 export interface Environment {

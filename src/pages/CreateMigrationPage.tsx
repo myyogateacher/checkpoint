@@ -7,6 +7,7 @@ import type { Database, Environment } from '../types'
 import { ENGINE_LABELS } from '../lib/format'
 import { engineSupportsMigrations } from '../lib/engines'
 import { prevalidateMigration, prevalidateStatement, type Violation } from '../lib/validationRules'
+import { checkSyntax } from '../lib/sqlSyntax'
 import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
 import { EngineBadge } from '../components/badges'
@@ -107,12 +108,16 @@ export function CreateMigrationPage() {
 
     // Pre-validate against the target engine's enabled rules: per-statement
     // violations are attached to each statement, aggregate ones to the migration.
+    // Syntax is checked first, alongside the rules, per statement.
     if (activeDb) {
       const sections = await api.getValidationRules(activeDb.engine)
       const perStmt: Record<string, Violation[]> = {}
       let any = false
       for (const q of filled) {
-        const v = prevalidateStatement(q.sql.trim(), sections)
+        const v: Violation[] = []
+        const syntaxError = checkSyntax(q.sql.trim(), activeDb.engine)
+        if (syntaxError) v.push({ ruleId: 'syntax', ruleTitle: 'SQL syntax', message: syntaxError })
+        v.push(...prevalidateStatement(q.sql.trim(), sections))
         if (v.length) {
           perStmt[q.key] = v
           any = true

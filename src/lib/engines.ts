@@ -45,16 +45,9 @@ export const ENGINES: Record<DatabaseEngine, EngineMeta> = {
   aurora_mysql: { label: 'Aurora MySQL', category: 'relational', defaultPort: 3306, dialect: 'mysql', query: true, migrations: true, color: 'amber' },
   mariadb: { label: 'MariaDB', category: 'relational', defaultPort: 3306, dialect: 'mariadb', query: true, migrations: true, color: 'amber' },
   tidb: { label: 'TiDB', category: 'relational', defaultPort: 4000, dialect: 'tidb', query: true, migrations: true, color: 'amber' },
-  // --- Relational: other ---
-  oracle: { label: 'Oracle', category: 'relational', defaultPort: 1521, dialect: 'plsql', query: true, migrations: true, color: 'rose' },
-  sqlserver: { label: 'SQL Server', category: 'relational', defaultPort: 1433, dialect: 'transactsql', query: true, migrations: true, color: 'blue' },
   // --- Analytics & warehouse ---
   clickhouse: { label: 'ClickHouse', category: 'analytics', defaultPort: 8123, dialect: 'sql', query: true, migrations: true, color: 'yellow' },
-  snowflake: { label: 'Snowflake', category: 'analytics', defaultPort: 443, dialect: 'snowflake', query: true, migrations: true, color: 'sky' },
-  bigquery: { label: 'BigQuery', category: 'analytics', defaultPort: 443, dialect: 'bigquery', query: true, migrations: true, color: 'blue' },
   redshift: { label: 'Redshift', category: 'analytics', defaultPort: 5439, dialect: 'redshift', query: true, migrations: true, color: 'sky' },
-  hive: { label: 'Hive', category: 'analytics', defaultPort: 10000, dialect: 'hive', query: true, migrations: true, color: 'violet' },
-  databricks: { label: 'Databricks', category: 'analytics', defaultPort: 443, dialect: 'spark', query: true, migrations: true, color: 'rose' },
   starrocks: { label: 'StarRocks', category: 'analytics', defaultPort: 9030, dialect: 'mysql', query: true, migrations: true, color: 'amber' },
   elasticsearch: { label: 'Elasticsearch', category: 'analytics', defaultPort: 9200, dialect: null, query: true, migrations: false, color: 'teal' },
   // --- NoSQL ---
