@@ -13,6 +13,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "tsc -p tsconfig.server.json",
+    "test": "bun test server",
     "lint": "eslint .",
     "preview": "vite preview",
     "screenshots": "node scripts/screenshots.mjs"

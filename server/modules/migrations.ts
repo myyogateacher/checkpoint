@@ -148,6 +148,13 @@ export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl
   } catch (err) {
     await execute('UPDATE migrations SET status = :s WHERE id = :id', { s: 'failed', id: mig.id })
     await addEvent(mig.id, actorEmail, 'failed', (err as Error).message)
+    // Notify Slack of the failure (threaded reply with the full error). Guarded so a
+    // notification hiccup can never mask the real apply error we must rethrow.
+    try {
+      await notifyMigration(mig.org_id, 'failed', mig.id, actorEmail, baseUrl, (err as Error).message)
+    } catch (notifyErr) {
+      console.error(`[slack] failed-apply notification error: ${(notifyErr as Error).message}`)
+    }
     throw err
   }
   await execute('UPDATE migrations SET status = :s, applied_at = NOW(), scheduled_for = NULL, scheduled_by = NULL WHERE id = :id', { s: 'applied', id: mig.id })
