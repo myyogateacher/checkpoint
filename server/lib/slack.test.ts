@@ -20,16 +20,15 @@ describe('buildMigrationBlocks', () => {
     expect(blocks[0].type).toBe('markdown')
   })
 
-  test('has a Title heading, the 3-column table, and a View link', () => {
+  test('has a Title heading and the 4-column table with a View link column', () => {
     const md = build()[0].text as string
     expect(md).toContain('**Title:** Testing')
-    expect(md).toContain('| Environment | Database | Submitted by |')
-    expect(md).toContain('| Production | main_db | Harsha Hota |')
-    expect(md).toContain('[View migration](https://cp.example.com/migrations/abc)')
+    expect(md).toContain('| Environment | Database | Submitted by | View |')
+    expect(md).toContain('| Production | main_db | Harsha Hota | [View](https://cp.example.com/migrations/abc) |')
   })
 
   test('null environment renders an em dash cell', () => {
-    expect(build({ envName: null })[0].text).toContain('| — | main_db | Harsha Hota |')
+    expect(build({ envName: null })[0].text).toContain('| — | main_db | Harsha Hota | [View]')
   })
 
   test('escapes pipes and collapses newlines in cell values', () => {

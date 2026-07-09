@@ -224,11 +224,9 @@ export function buildMigrationBlocks(input: MigrationBlockInput): unknown[] {
   const md = [
     `**Title:** ${cell(input.title)}`,
     '',
-    '| Environment | Database | Submitted by |',
-    '| --- | --- | --- |',
-    `| ${cell(input.envName ?? '—')} | ${cell(input.dbName)} | ${cell(input.submittedBy)} |`,
-    '',
-    `[View migration](${input.url})`,
+    '| Environment | Database | Submitted by | View |',
+    '| --- | --- | --- | --- |',
+    `| ${cell(input.envName ?? '—')} | ${cell(input.dbName)} | ${cell(input.submittedBy)} | [View](${input.url}) |`,
   ].join('\n')
   return [{ type: 'markdown', text: md }]
 }
