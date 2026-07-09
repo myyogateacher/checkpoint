@@ -46,4 +46,16 @@ export const MIGRATIONS: Migration[] = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     ],
   },
+  {
+    version: 3,
+    name: 'migrations_slack_thread',
+    statements: [
+      // Slack thread anchor for a migration: the "submitted for approval" message's
+      // ts + channel, so approve/apply/reviewer notifications reply in-thread and
+      // react on the parent. Populated on the submit notification (PROD-7178).
+      `ALTER TABLE migrations
+         ADD COLUMN slack_message_ts VARCHAR(64) DEFAULT NULL,
+         ADD COLUMN slack_channel_id VARCHAR(64) DEFAULT NULL`,
+    ],
+  },
 ]
