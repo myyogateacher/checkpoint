@@ -23,15 +23,17 @@ const DEFAULTS: SlackSettings = {
   notify_on_reviewer: false,
 }
 
-type MigrationEvent = 'submit' | 'approve' | 'apply' | 'reviewer' | 'failed'
+type MigrationEvent = 'submit' | 'approve' | 'apply' | 'reviewer' | 'failed' | 'reject'
 
 const TOGGLE: Record<MigrationEvent, keyof SlackSettings> = {
   submit: 'notify_on_submit',
   approve: 'notify_on_approve',
   apply: 'notify_on_apply',
   reviewer: 'notify_on_reviewer',
-  // A failed apply piggybacks the apply toggle — same audience wants both outcomes.
+  // A failed apply piggybacks the apply toggle; a rejection piggybacks approve —
+  // each is the negative outcome of that stage, so the same audience wants both.
   failed: 'notify_on_apply',
+  reject: 'notify_on_approve',
 }
 
 async function loadSlack(orgId: string): Promise<SlackSettings | null> {
@@ -40,50 +42,43 @@ async function loadSlack(orgId: string): Promise<SlackSettings | null> {
   return asJson<SlackSettings>(row.slack, DEFAULTS)
 }
 
-// Cache email → Slack mention resolutions so we don't hit users.lookupByEmail on
-// every notification. Keyed by token so separate workspaces never collide.
-// `null` = looked up but no matching Slack user (so we fall back to plain email).
-const mentionCache = new Map<string, string | null>()
+// Cache email → resolved Slack user ({id, name}) so we don't hit users.lookupByEmail
+// on every notification. Keyed by token so separate workspaces never collide.
+// `null` = looked up but no matching Slack user (callers fall back to the email).
+const userCache = new Map<string, { id: string; name: string } | null>()
 
-// Resolve an email to a Slack mention token (`<@U…>`). Returns null when the email
-// has no Slack account or the lookup fails — callers fall back to the plain email.
-// Requires the `users:read.email` scope on the notification token.
-async function lookupMention(token: string, email: string): Promise<string | null> {
+// Resolve an email to a Slack user — `id` for a clickable mention (`<@U…>`), `name`
+// for plain-text display (e.g. inside a markdown table where mentions don't render).
+// Returns null when the email has no Slack account or the lookup fails. Requires the
+// `users:read.email` scope on the notification token.
+async function lookupUser(token: string, email: string): Promise<{ id: string; name: string } | null> {
   const key = `${token}:${email.toLowerCase()}`
-  const cached = mentionCache.get(key)
+  const cached = userCache.get(key)
   if (cached !== undefined) return cached
 
-  let mention: string | null = null
+  let user: { id: string; name: string } | null = null
   try {
     const res = await fetch(`https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(email)}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(8000),
     })
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; user?: { id?: string }; error?: string }
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      user?: { id?: string; real_name?: string; name?: string; profile?: { display_name?: string; real_name?: string } }
+      error?: string
+    }
     if (data.ok && data.user?.id) {
-      mention = `<@${data.user.id}>`
+      const p = data.user.profile
+      const name = p?.display_name || p?.real_name || data.user.real_name || data.user.name || email
+      user = { id: data.user.id, name }
     } else if (data.error && data.error !== 'users_not_found') {
       console.error(`[slack] users.lookupByEmail failed for ${email}: ${data.error}`)
     }
   } catch (err) {
     console.error(`[slack] users.lookupByEmail failed for ${email}: ${(err as Error).message}`)
   }
-  mentionCache.set(key, mention)
-  return mention
-}
-
-// Sentinel stored in a releasers list meaning "any org member" (mirrors ALL_USERS
-// on the client / in modules/migrations). Rendered as plain text, never a mention —
-// we must not @-ping the entire team.
-const ALL_USERS = '*'
-
-// Turn a list of emails into a display string, replacing each with a Slack mention
-// where the email maps to a Slack user and keeping the plain email otherwise. When
-// the list is the ALL_USERS sentinel, show a plain label instead of pinging everyone.
-async function mentionList(token: string, emails: string[]): Promise<string> {
-  if (emails.includes(ALL_USERS)) return 'All Users'
-  const resolved = await Promise.all(emails.map(async (e) => (await lookupMention(token, e)) ?? e))
-  return resolved.join(', ')
+  userCache.set(key, user)
+  return user
 }
 
 // Post a message to a Slack channel via chat.postMessage (defaults to the org's
@@ -148,15 +143,6 @@ export async function addReaction(slack: SlackSettings, channel: string, ts: str
   }
 }
 
-// Heading for the root (submit) table message.
-const LABEL: Record<MigrationEvent, string> = {
-  submit: ':large_yellow_circle: *Migration submitted for approval*',
-  approve: ':white_check_mark: *Migration approved*',
-  apply: ':rocket: *Migration applied*',
-  reviewer: ':eyes: *Reviewer added to migration*',
-  failed: ':x: *Migration apply failed*',
-}
-
 // One-liner heading for threaded (non-root) replies: `<REPLY> by <actor> · View`.
 const REPLY: Record<MigrationEvent, string> = {
   submit: '',
@@ -164,6 +150,7 @@ const REPLY: Record<MigrationEvent, string> = {
   apply: ':rocket: *Applied*',
   reviewer: ':eyes: *Reviewer added*',
   failed: ':x: *Apply failed*',
+  reject: ':no_entry_sign: *Rejected*',
 }
 
 const VERB: Record<MigrationEvent, string> = {
@@ -172,6 +159,7 @@ const VERB: Record<MigrationEvent, string> = {
   apply: 'Applied',
   reviewer: 'Updated',
   failed: 'Apply failed',
+  reject: 'Rejected',
 }
 
 // Reaction (Slack emoji short name, no colons) added to the PARENT "submitted"
@@ -182,6 +170,7 @@ const REACTION: Record<MigrationEvent, string | null> = {
   apply: 'rocket',
   reviewer: null,
   failed: 'x',
+  reject: 'no_entry_sign',
 }
 
 // How a lifecycle notification relates to the migration's Slack thread.
@@ -207,17 +196,13 @@ export function notificationPlan(event: MigrationEvent, storedTs: string | null)
   }
 }
 
-// Resolved data a migration notification renders — mentions/actor already resolved to
-// display strings by the caller, so this stays pure and unit-testable.
+// Resolved data the root (submit) notification renders — the actor is already resolved
+// to a display name by the caller, so this stays pure and unit-testable.
 export interface MigrationBlockInput {
-  label: string // event heading mrkdwn (emoji + bold), e.g. LABEL['submit']
   title: string
-  description: string | null
   envName: string | null
   dbName: string
-  releasers: string // resolved mention list; '' when there are none
-  verb: string // Submitted / Approved / Applied / Updated
-  actor: string // resolved mention, or plain email when not on Slack
+  submittedBy: string // plain-text display name (mentions don't render in a md table)
   url: string // link to the migration
 }
 
@@ -226,45 +211,40 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`
 }
 
-// Pure: build the Block Kit blocks for a migration notification — a heading + title,
-// a 2-column fields grid (Environment, Database, and Releasers when present), an
-// optional description, and a context line with the actor mention and View link.
-export function buildMigrationBlocks(input: MigrationBlockInput): unknown[] {
-  const fields = [
-    { type: 'mrkdwn', text: `*Environment:*\n${input.envName ?? '—'}` },
-    { type: 'mrkdwn', text: `*Database:*\n${input.dbName}` },
-  ]
-  if (input.releasers.trim()) fields.push({ type: 'mrkdwn', text: `*Releasers:*\n${input.releasers}` })
-
-  const blocks: unknown[] = [
-    { type: 'section', text: { type: 'mrkdwn', text: `${input.label}\n*${input.title}*` } },
-    { type: 'section', fields: fields.slice(0, 10) },
-  ]
-
-  const description = input.description?.trim()
-  if (description) {
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Description:*\n${truncate(description, 2900)}` } })
-  }
-
-  blocks.push({
-    type: 'context',
-    elements: [{ type: 'mrkdwn', text: `${input.verb} by ${input.actor} · <${input.url}|View migration>` }],
-  })
-  return blocks
+// Escape a value for a Markdown table cell: `|` breaks columns and newlines break rows.
+function cell(s: string): string {
+  return s.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ').trim() || '—'
 }
 
-// Pure: build the blocks for a threaded reply (approve/apply/reviewer/failed) — a
-// single one-liner (`<heading> by <actor> · View`), plus a code block with the full
-// error when one is given (failed applies).
+// Pure: build the blocks for the root (submit) notification — a `Title:` heading, then
+// a Markdown table (Environment, Database, Submitted by) and a View link. Uses a
+// `markdown` block so Slack renders a bordered grid like the GitHub app's alerts
+// (Block Kit `fields` can't draw a real table).
+export function buildMigrationBlocks(input: MigrationBlockInput): unknown[] {
+  const md = [
+    `**Title:** ${cell(input.title)}`,
+    '',
+    '| Environment | Database | Submitted by | View |',
+    '| --- | --- | --- | --- |',
+    `| ${cell(input.envName ?? '—')} | ${cell(input.dbName)} | ${cell(input.submittedBy)} | [View](${input.url}) |`,
+  ].join('\n')
+  return [{ type: 'markdown', text: md }]
+}
+
+// Pure: build the blocks for a threaded reply (approve/apply/reviewer/failed/reject) —
+// a one-liner (`<heading> by <actor> · View`), optionally a `Reason:` line (rejection
+// note) and/or a code block with the full error (failed applies).
 export function buildThreadReplyBlocks(input: {
   heading: string // REPLY[event], e.g. ':white_check_mark: *Approved*'
   actor: string
   url: string
-  error?: string | null
+  error?: string | null // technical error → code block (failed apply)
+  note?: string | null // human note → `Reason:` line (rejection reason)
 }): unknown[] {
-  const blocks: unknown[] = [
-    { type: 'section', text: { type: 'mrkdwn', text: `${input.heading} by ${input.actor} · <${input.url}|View migration>` } },
-  ]
+  let text = `${input.heading} by ${input.actor} · <${input.url}|View migration>`
+  const note = input.note?.trim()
+  if (note) text += `\n*Reason:* ${truncate(note, 1000)}`
+  const blocks: unknown[] = [{ type: 'section', text: { type: 'mrkdwn', text } }]
   const error = input.error?.trim()
   if (error) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${truncate(error, 2800)}\`\`\`` } })
   return blocks
@@ -275,37 +255,21 @@ interface MigrationInfo {
   description: string | null
   db_name: string
   env_name: string | null
-  // Configured releasers for the migration's project (shown in the notification).
-  releasers: string[]
   // Slack thread anchor recorded on the submit notification (PROD-7178).
   slack_message_ts: string | null
   slack_channel_id: string | null
 }
 
 async function loadMigrationInfo(migrationId: string): Promise<MigrationInfo | undefined> {
-  const row = await queryOne<{
-    title: string
-    description: string | null
-    db_name: string
-    env_name: string | null
-    releasers: unknown
-    slack_message_ts: string | null
-    slack_channel_id: string | null
-  }>(
-    `SELECT m.title, m.description, d.name AS db_name, e.name AS env_name,
-            m.slack_message_ts, m.slack_channel_id,
-            COALESCE(pes.releasers, ps.releasers) AS releasers
+  return queryOne<MigrationInfo>(
+    `SELECT m.title, d.name AS db_name, e.name AS env_name,
+            m.slack_message_ts, m.slack_channel_id
        FROM migrations m
        JOIN \`databases\` d ON d.id = m.database_id
-       JOIN projects p ON p.id = d.project_id
        LEFT JOIN environments e ON e.id = d.environment_id
-       LEFT JOIN project_settings ps ON ps.project_id = p.id
-       LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id
       WHERE m.id = :id`,
     { id: migrationId },
   )
-  if (!row) return undefined
-  return { ...row, releasers: asJson<string[]>(row.releasers, []) }
 }
 
 // Notify the org's Slack channel about a migration lifecycle event, honoring the
@@ -326,27 +290,32 @@ export async function notifyMigration(
   if (!m) return
 
   const verb = VERB[event]
-  // Actor renders as a Slack mention when their email maps to a Slack user, else plain.
-  const actorMention = (await lookupMention(slack.notification_token, actor)) ?? actor
+  // Resolve the actor once: a clickable mention for thread replies, a plain display
+  // name for the markdown table (where `<@U…>` mentions don't render).
+  const actorUser = await lookupUser(slack.notification_token, actor)
+  const actorMention = actorUser ? `<@${actorUser.id}>` : actor
+  const actorName = actorUser?.name ?? actor
   const url = `${baseUrl}/migrations/${migrationId}`
 
   const plan = notificationPlan(event, m.slack_message_ts)
 
-  // Root (submit) carries the full table; threaded replies are one-liners (plus the
-  // full error in a code block for a failed apply).
+  // Root (submit) is the table; threaded replies are one-liners — with the full error
+  // (failed apply) or a reason line (rejection) appended when present.
   const blocks = plan.isRoot
     ? buildMigrationBlocks({
-        label: LABEL[event],
         title: m.title,
-        description: m.description,
         envName: m.env_name,
         dbName: m.db_name,
-        releasers: m.releasers.length ? await mentionList(slack.notification_token, m.releasers) : '',
-        verb,
-        actor: actorMention,
+        submittedBy: actorName,
         url,
       })
-    : buildThreadReplyBlocks({ heading: REPLY[event], actor: actorMention, url, error: detail })
+    : buildThreadReplyBlocks({
+        heading: REPLY[event],
+        actor: actorMention,
+        url,
+        error: event === 'failed' ? detail : null,
+        note: event === 'reject' ? detail : null,
+      })
   // Plain-text fallback for notifications / accessibility (chat.postMessage wants one
   // even when blocks are present).
   const fallback = `${verb}: ${m.title} (${m.db_name})`

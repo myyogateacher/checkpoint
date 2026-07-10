@@ -315,6 +315,10 @@ export function registerMigrations(router: Router) {
       if (becameApproved) {
         await notifyMigration(mig.org_id, 'approve', mig.id, user.email, env.appBaseUrl || ctx.url.origin)
       }
+      if (action === 'reject') {
+        // Threaded rejection alert with the reject note as the reason, if given.
+        await notifyMigration(mig.org_id, 'reject', mig.id, user.email, env.appBaseUrl || ctx.url.origin, note ?? null)
+      }
       return json(await fullMigration(await loadMig(user.id, mig.id)))
     })
   }
