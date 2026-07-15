@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FaArrowLeft, FaGripVertical, FaPlus, FaTrash } from 'react-icons/fa'
+import { FaArrowLeft, FaGripVertical, FaPlus, FaTimes, FaTrash } from 'react-icons/fa'
 import { api } from '../services/api'
+import { useAuth } from '../context/AuthContext'
 import { useOrg } from '../context/OrgContext'
-import type { Database, Environment } from '../types'
+import type { Database, Environment, ManagedUser } from '../types'
 import { ENGINE_LABELS } from '../lib/format'
 import { engineSupportsMigrations } from '../lib/engines'
 import { prevalidateMigration, prevalidateStatement, type Violation } from '../lib/validationRules'
@@ -31,6 +32,7 @@ export function CreateMigrationPage() {
   // picker; project/global labels disambiguate same-named databases.
   const { databaseId, projectId } = useParams()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { currentOrgId } = useOrg()
   const [databases, setDatabases] = useState<Database[] | null>(null)
   const [environments, setEnvironments] = useState<Environment[]>([])
@@ -39,6 +41,9 @@ export function CreateMigrationPage() {
   const [selectedDbId, setSelectedDbId] = useState<string>(databaseId ?? '')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [users, setUsers] = useState<ManagedUser[]>([])
+  const [reviewers, setReviewers] = useState<string[]>([])
+  const [deployGated, setDeployGated] = useState(false)
   const [queries, setQueries] = useState<QueryDraft[]>([newQuery()])
   // Validation: per-statement violations keyed by query, plus migration-level ones.
   const [stmtViolations, setStmtViolations] = useState<Record<string, Violation[]>>({})
@@ -46,6 +51,10 @@ export function CreateMigrationPage() {
   const [hasViolations, setHasViolations] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    void api.getUsers().then(setUsers)
+  }, [])
 
   useEffect(() => {
     void (async () => {
@@ -142,6 +151,8 @@ export function CreateMigrationPage() {
         description: description.trim() || null,
         queries: cleaned,
         submit: mode === 'submit',
+        deploy_gated: deployGated,
+        reviewers,
       })
       notify.success(mode === 'submit' ? 'Migration submitted for approval' : 'Migration saved as draft')
       navigate(`/migrations/${migration.id}`)
@@ -224,6 +235,45 @@ export function CreateMigrationPage() {
               placeholder="Why is this change needed?"
             />
           </Field>
+          <Field label="Reviewers" hint="Optional — tagged in the Slack notification on submit.">
+            {reviewers.length ? (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {reviewers.map((email) => (
+                  <span
+                    key={email}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/70 bg-white/60 px-2.5 py-1 text-xs text-slate-700"
+                  >
+                    {email}
+                    <button
+                      onClick={() => setReviewers((prev) => prev.filter((r) => r !== email))}
+                      className="cursor-pointer text-slate-400 transition hover:text-rose-600"
+                      title="Remove reviewer"
+                    >
+                      <FaTimes size={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <Dropdown
+              value=""
+              placeholder="Add reviewer…"
+              onChange={(email) => setReviewers((prev) => [...prev, email])}
+              options={users
+                .filter((u) => u.email !== user?.email && !reviewers.includes(u.email))
+                .map((u) => ({ value: u.email, label: u.name ?? u.email, hint: u.email }))}
+            />
+          </Field>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={deployGated}
+              onChange={(e) => setDeployGated(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Deployment migration
+            <span className="text-xs text-slate-500">— ships with a code deploy; only an admin or deployer can apply it.</span>
+          </label>
         </Card>
 
         <Card className="p-5">

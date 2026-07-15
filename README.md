@@ -45,7 +45,7 @@ and moves through a lifecycle: `draft → pending_approval → approved → appl
 
 ## Features
 
-1. **Google login** with role-based access (`admin` / `editor` / `viewer`).
+1. **Google login** with role-based access (`admin` / `editor` / `deployer` / `viewer`).
 2. **Structure tree** — Project → Environment → Database in a collapsible sidebar.
 3. **Multi-engine** — PostgreSQL, MySQL, ClickHouse.
 4. **Schema browser** — tables, columns, types, indexes, row estimates.
@@ -65,13 +65,18 @@ API specification used to plan the backend.
 
 ## Roles
 
-| Capability                          | viewer | editor | admin |
-| ----------------------------------- | :----: | :----: | :---: |
-| Browse schema, run read queries     |   ✓    |   ✓    |   ✓   |
-| Pull schema, create/submit migration|        |   ✓    |   ✓   |
-| Add reviewers, comment              |        |   ✓    |   ✓   |
-| Approve / reject / apply migration  |        |        |   ✓   |
-| Manage users, write connections, settings |  |        |   ✓   |
+| Capability                          | viewer | deployer | editor | admin |
+| ----------------------------------- | :----: | :------: | :----: | :---: |
+| Browse schema, run read queries     |   ✓    |    ✓     |   ✓    |   ✓   |
+| Pull schema, create/submit migration|        |          |   ✓    |   ✓   |
+| Add reviewers, comment              |        |          |   ✓    |   ✓   |
+| Approve / reject / apply migration  |        |          |        |   ✓   |
+| Apply **deployment** migrations     |        |    ✓     |        |   ✓   |
+| Manage users, write connections, settings |  |          |        |   ✓   |
+
+A **deployment migration** (checkbox at creation) ships together with a code
+deploy: review works as usual, but only an admin or deployer can apply or
+schedule it — the project's releasers list is not honored for these.
 
 ## Develop
 

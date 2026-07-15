@@ -1,4 +1,4 @@
-import { queryOne, execute } from '../db/pool'
+import { query, queryOne, execute } from '../db/pool'
 import { asJson } from './serialize'
 
 // Slack notification settings, persisted per-org inside app_settings.slack
@@ -204,6 +204,10 @@ export interface MigrationBlockInput {
   dbName: string
   submittedBy: string // plain-text display name (mentions don't render in a md table)
   url: string // link to the migration
+  // Deployment migration: marked and typed apart from standard ones (PROD-7464).
+  deployGated: boolean
+  // Resolved reviewer mentions (<@U…> or plain emails), tagged below the table.
+  reviewerMentions: string[]
 }
 
 // Section text (and each field) caps at 3000 chars in Block Kit; keep well under.
@@ -216,19 +220,23 @@ function cell(s: string): string {
   return s.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ').trim() || '—'
 }
 
-// Pure: build the blocks for the root (submit) notification — a `Title:` heading, then
-// a Markdown table (Environment, Database, Submitted by) and a View link. Uses a
-// `markdown` block so Slack renders a bordered grid like the GitHub app's alerts
-// (Block Kit `fields` can't draw a real table).
+// Pure: build the blocks for the root (submit) notification — a `Title:` heading
+// (prefixed `🚢 Deployment -` for deployment migrations), then a Markdown table
+// (Environment, Database, Submitted by) and a View link. Uses a `markdown` block
+// so Slack renders a bordered grid like the GitHub app's alerts (Block Kit
+// `fields` can't draw a real table). Reviewer mentions go in a mrkdwn section
+// below the table — mentions only render in mrkdwn.
 export function buildMigrationBlocks(input: MigrationBlockInput): unknown[] {
   const md = [
-    `**Title:** ${cell(input.title)}`,
+    `${input.deployGated ? '🚢 **Deployment** - ' : ''}**Title:** ${cell(input.title)}`,
     '',
     '| Environment | Database | Submitted by | View |',
     '| --- | --- | --- | --- |',
     `| ${cell(input.envName ?? '—')} | ${cell(input.dbName)} | ${cell(input.submittedBy)} | [View](${input.url}) |`,
   ].join('\n')
-  return [{ type: 'markdown', text: md }]
+  const blocks: unknown[] = [{ type: 'markdown', text: md }]
+  if (input.reviewerMentions.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `Reviewers: ${input.reviewerMentions.join(' ')}` } })
+  return blocks
 }
 
 // Pure: build the blocks for a threaded reply (approve/apply/reviewer/failed/reject) —
@@ -240,8 +248,10 @@ export function buildThreadReplyBlocks(input: {
   url: string
   error?: string | null // technical error → code block (failed apply)
   note?: string | null // human note → `Reason:` line (rejection reason)
+  cc?: string | null // creator mention, cc'd on approve/apply
 }): unknown[] {
   let text = `${input.heading} by ${input.actor} · <${input.url}|View migration>`
+  if (input.cc) text += `\ncc ${input.cc}`
   const note = input.note?.trim()
   if (note) text += `\n*Reason:* ${truncate(note, 1000)}`
   const blocks: unknown[] = [{ type: 'section', text: { type: 'mrkdwn', text } }]
@@ -255,6 +265,8 @@ interface MigrationInfo {
   description: string | null
   db_name: string
   env_name: string | null
+  author_email: string
+  deploy_gated: number
   // Slack thread anchor recorded on the submit notification (PROD-7178).
   slack_message_ts: string | null
   slack_channel_id: string | null
@@ -263,6 +275,7 @@ interface MigrationInfo {
 async function loadMigrationInfo(migrationId: string): Promise<MigrationInfo | undefined> {
   return queryOne<MigrationInfo>(
     `SELECT m.title, d.name AS db_name, e.name AS env_name,
+            m.author_email, m.deploy_gated,
             m.slack_message_ts, m.slack_channel_id
        FROM migrations m
        JOIN \`databases\` d ON d.id = m.database_id
@@ -299,6 +312,23 @@ export async function notifyMigration(
 
   const plan = notificationPlan(event, m.slack_message_ts)
 
+  // Root: resolve reviewer emails to mentions. Replies: cc the creator on
+  // approve/apply, unless they are the actor themselves.
+  let reviewerMentions: string[] = []
+  if (plan.isRoot) {
+    const rows = await query<{ reviewer_email: string }>(
+      'SELECT reviewer_email FROM migration_reviewers WHERE migration_id = :id',
+      { id: migrationId },
+    )
+    reviewerMentions = await Promise.all(rows.map(async (r) => {
+      const u = await lookupUser(slack.notification_token, r.reviewer_email)
+      return u ? `<@${u.id}>` : r.reviewer_email
+    }))
+  }
+  const ccCreator = (event === 'approve' || event === 'apply') && m.author_email !== actor
+  const creatorUser = ccCreator ? await lookupUser(slack.notification_token, m.author_email) : null
+  const cc = ccCreator ? (creatorUser ? `<@${creatorUser.id}>` : m.author_email) : null
+
   // Root (submit) is the table; threaded replies are one-liners — with the full error
   // (failed apply) or a reason line (rejection) appended when present.
   const blocks = plan.isRoot
@@ -308,6 +338,8 @@ export async function notifyMigration(
         dbName: m.db_name,
         submittedBy: actorName,
         url,
+        deployGated: !!m.deploy_gated,
+        reviewerMentions,
       })
     : buildThreadReplyBlocks({
         heading: REPLY[event],
@@ -315,10 +347,11 @@ export async function notifyMigration(
         url,
         error: event === 'failed' ? detail : null,
         note: event === 'reject' ? detail : null,
+        cc,
       })
   // Plain-text fallback for notifications / accessibility (chat.postMessage wants one
   // even when blocks are present).
-  const fallback = `${verb}: ${m.title} (${m.db_name})`
+  const fallback = `${verb}: ${m.title} (${m.db_name})${m.deploy_gated ? ' · deployment' : ''}`
   // Reply in the parent's own channel (kept alongside its ts) so a later change to
   // the configured channel can't orphan the thread. Root/fallback posts (no anchor)
   // go to the current channel.

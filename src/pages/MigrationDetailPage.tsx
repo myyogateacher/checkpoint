@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { can, formatDate, relativeTime } from '../lib/format'
 import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
-import { EngineBadge, StatusBadge } from '../components/badges'
+import { DeploymentBadge, EngineBadge, StatusBadge } from '../components/badges'
 import { Dropdown } from '../components/Dropdown'
 import { DateTimePicker } from '../components/DateTimePicker'
 import { ALL_USERS } from '../components/UserMultiSelect'
@@ -160,7 +160,11 @@ export function MigrationDetailPage() {
   const email = user?.email ?? ''
   // Approve/reject: admins or a designated approver; apply: admins or a designated releaser.
   const canApproveMig = canApprove || migration.approvers.includes(email)
-  const canApply = canApprove || migration.releasers.includes(ALL_USERS) || migration.releasers.includes(email)
+  // Deployment migrations: only an admin or deployer may apply/schedule —
+  // the project's releasers list is not honored (mirrors the server).
+  const canApply = migration.deploy_gated
+    ? can(user?.role, 'apply_gated')
+    : canApprove || migration.releasers.includes(ALL_USERS) || migration.releasers.includes(email)
   // Hide the Approve button once this user has already approved (one vote each).
   const alreadyApproved = migration.events.some((e) => e.action === 'approve' && e.actor_email === email)
   // Distinct approvers so far, for the approval-progress indicator.
@@ -243,6 +247,7 @@ export function MigrationDetailPage() {
           {actions.length ? (
             <div className="flex items-center gap-2">
               <StatusBadge status={migration.status} />
+              {migration.deploy_gated ? <DeploymentBadge /> : null}
             </div>
           ) : null}
           <ErrorBanner message={error} />
@@ -319,7 +324,10 @@ export function MigrationDetailPage() {
                 </span>
               </Meta>
               <Meta label="Status">
-                <StatusBadge status={migration.status} />
+                <span className="flex items-center gap-2">
+                  <StatusBadge status={migration.status} />
+                  {migration.deploy_gated ? <DeploymentBadge /> : null}
+                </span>
               </Meta>
               <Meta label="Author">{migration.author_email}</Meta>
               <Meta label="Created">{formatDate(migration.created_at)}</Meta>

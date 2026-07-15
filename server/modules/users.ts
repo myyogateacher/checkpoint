@@ -1,6 +1,6 @@
 import { type Router, type Ctx, json, readJson, badRequest, forbidden } from '../lib/http'
 import { query, queryOne, execute } from '../db/pool'
-import { requireCapability, userOrgIds } from '../lib/auth'
+import { requireCapability, requireUser, userOrgIds } from '../lib/auth'
 import { newId } from '../lib/ids'
 import { iso } from '../lib/serialize'
 import { writeAudit } from '../lib/audit'
@@ -26,9 +26,10 @@ const toUser = (r: UserRow, selfId: string) => ({
 })
 
 export function registerUsers(router: Router) {
-  // Members of the requester's organizations.
+  // Members of the requester's organizations. Any member may list (feeds the
+  // reviewer pickers); mutations below stay admin-only.
   router.get('/api/users', async (ctx: Ctx) => {
-    const user = requireCapability(ctx, 'manage_users')
+    const user = requireUser(ctx)
     const orgs = await userOrgIds(user.id)
     if (orgs.length === 0) return json([toUser({ ...user, last_login_at: null }, user.id)])
     const rows = await query<UserRow>(

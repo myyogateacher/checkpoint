@@ -26,7 +26,7 @@ export type DatabaseEngine =
   | 'dynamodb'
   | 'cosmosdb'
 
-export type UserRole = 'admin' | 'editor' | 'viewer'
+export type UserRole = 'admin' | 'editor' | 'deployer' | 'viewer'
 
 export type ConnectionMode = 'read' | 'write'
 
@@ -199,6 +199,8 @@ export interface Migration {
   description: string | null
   status: MigrationStatus
   author_email: string
+  // Deployment migration: applied only by an admin or deployer, with its code deploy.
+  deploy_gated: boolean
   // Project governance snapshot: who may approve / who may release (apply).
   approvers: string[]
   releasers: string[]

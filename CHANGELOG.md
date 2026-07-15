@@ -1,0 +1,77 @@
+# Changelog
+
+All notable changes to Checkpoint are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.2.0] - 2026-07-15
+
+### Added
+
+- **Deployer role** — read-only access plus permission to apply deployment
+  migrations. Available in the invite and role dropdowns.
+- **Deployment migrations** — a checkbox at creation marks a migration as
+  shipping with a code deploy. Review works as usual, but only an admin or
+  deployer can apply or schedule it; the project's releasers list is not
+  honored. Marked with a 🚢 badge in the UI and a 🚢 Deployment title prefix
+  in Slack.
+- **Reviewers at creation** — pick reviewers on the create-migration form;
+  they are @-mentioned in the Slack submit notification.
+- Slack: the creator is cc'd on approved/applied replies.
+
+### Changed
+
+- `GET /api/users` is available to all signed-in members (it feeds the
+  reviewer pickers); user mutations remain admin-only.
+
+## [1.1.0] - 2026-07-01
+
+### Added
+
+- **Search highlighting** in the schema view and query-panel schema explorer —
+  matched table and column names are highlighted (readable in both light and
+  dark mode).
+- **Slack endpoint** for notifications/integration.
+
+### Changed
+
+- Faster server startup: schema init is versioned via a new `server_config`
+  table and forward-only migrations, so boots no longer re-check every table
+  against the DB spec.
+- Baseline schema now lives in `docs/schema.sql`, applied once to fresh
+  databases.
+- Enforced server-side rules and settings updates.
+
+### Fixed
+
+- Cleaner migration handling and general cleanup.
+
+## [1.0.0] - 2026-06-29
+
+The first release of Checkpoint — a workspace for querying your databases and
+shipping schema changes with review and governance built in.
+
+### Added
+
+- **Query Studio** — read-only query workspace with multi-tab editing, a
+  searchable schema explorer, and table / vertical result views. Supports
+  MySQL-family engines (MySQL, Aurora MySQL, MariaDB, TiDB, StarRocks) and
+  **Redis**, built on a pluggable per-engine driver interface. Save and share
+  queries via shareable links.
+- **Migrations** — propose, review, comment on, approve, and apply schema
+  migrations with a full audit trail. Per-project governance: designated
+  approvers and releasers, configurable required-approval counts, and an
+  **author self-approval** toggle (default off).
+- **Org & project structure** — organizations → projects → environments →
+  databases, with role-based capabilities and connection secrets encrypted at
+  rest.
+- **Platform** — Bun + React/TypeScript, schema auto-migration on boot,
+  email/Slack notifications, and an audit log across all sensitive actions.
+
+[Unreleased]: https://github.com/myyogateacher/checkpoint/compare/1.2.0...HEAD
+[1.2.0]: https://github.com/myyogateacher/checkpoint/compare/1.1.0...1.2.0
+[1.1.0]: https://github.com/myyogateacher/checkpoint/compare/1.0.0...1.1.0
+[1.0.0]: https://github.com/myyogateacher/checkpoint/releases/tag/1.0.0

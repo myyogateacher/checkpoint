@@ -18,9 +18,18 @@ const ALL_USERS = '*'
 
 // Whether `user` may release (apply/schedule) a migration given the project's
 // releasers list. Admins/approvers always can; otherwise the user must be listed,
-// or the list must contain the ALL_USERS sentinel.
-function canRelease(releasers: string[], user: SessionUser): boolean {
+// or the list must contain the ALL_USERS sentinel. Deployment (deploy-gated)
+// migrations are released only by an admin or deployer — the list is not honored.
+export function canRelease(deployGated: boolean, releasers: string[], user: SessionUser): boolean {
+  if (deployGated) return can(user.role, 'apply_gated')
   return can(user.role, 'approve') || releasers.includes(ALL_USERS) || releasers.includes(user.email)
+}
+
+// 403 for a failed release check, worded for the migration's kind.
+function releaseDenied(mig: MigRow, verb: string) {
+  return forbidden(mig.deploy_gated
+    ? `Only an admin or deployer can ${verb} a deployment migration.`
+    : `Only an admin or a designated releaser can ${verb} this migration.`)
 }
 
 // Approval threshold semantics: no settings row → the default of 1; an explicit
@@ -39,6 +48,7 @@ interface MigRow {
   description: string | null
   status: MigrationStatus
   author_email: string
+  deploy_gated: number
   approved_by: string | null
   approved_at: Date | null
   applied_at: Date | null
@@ -91,6 +101,7 @@ async function fullMigration(row: MigRow) {
     description: row.description,
     status: row.status,
     author_email: row.author_email,
+    deploy_gated: !!row.deploy_gated,
     approvers: asJson<string[]>(row.approvers, []),
     releasers: asJson<string[]>(row.releasers, []),
     required_approvals: requiredApprovals(row.required_approvals),
@@ -186,7 +197,7 @@ export function registerMigrations(router: Router) {
 
   router.post('/api/migrations', async (ctx: Ctx) => {
     const user = requireCapability(ctx, 'edit')
-    const body = await readJson<{ database_id: string; title: string; description: string | null; queries: string[]; submit: boolean }>(ctx.req)
+    const body = await readJson<{ database_id: string; title: string; description: string | null; queries: string[]; submit: boolean; deploy_gated?: boolean; reviewers?: string[] }>(ctx.req)
     if (!body.database_id || !body.title?.trim() || !body.queries?.length) throw badRequest('database_id, title and queries are required.')
     const db = await queryOne<{ org_id: string; name: string; engine: string; required_approvals: number | null }>(
       `SELECT p.org_id, d.name, d.engine,
@@ -214,14 +225,20 @@ export function registerMigrations(router: Router) {
     const autoApproved = body.submit && required === 0
     const id = newId('m')
     const status: MigrationStatus = !body.submit ? 'draft' : autoApproved ? 'approved' : 'pending_approval'
-    await execute('INSERT INTO migrations (id, database_id, title, description, status, author_email) VALUES (:id, :db, :title, :desc, :status, :author)', {
-      id, db: body.database_id, title: body.title.trim(), desc: body.description ?? null, status, author: user.email,
+    await execute('INSERT INTO migrations (id, database_id, title, description, status, author_email, deploy_gated) VALUES (:id, :db, :title, :desc, :status, :author, :gated)', {
+      id, db: body.database_id, title: body.title.trim(), desc: body.description ?? null, status, author: user.email, gated: body.deploy_gated ? 1 : 0,
     })
     if (autoApproved) await execute('UPDATE migrations SET approved_at = NOW() WHERE id = :id', { id })
     for (let i = 0; i < body.queries.length; i++) {
       await execute('INSERT INTO migration_queries (id, migration_id, ord, sql_text) VALUES (:id, :m, :ord, :sql)', {
         id: newId('q'), m: id, ord: i + 1, sql: body.queries[i],
       })
+    }
+    // Reviewers picked at creation; tagged in the submit notification rather than
+    // sent a separate "reviewer added" alert.
+    for (const email of body.reviewers ?? []) {
+      if (!email?.trim()) continue
+      await execute('INSERT IGNORE INTO migration_reviewers (migration_id, reviewer_email) VALUES (:m, :e)', { m: id, e: email.trim() })
     }
     await addEvent(id, user.email, 'created', null)
     if (body.submit) await addEvent(id, user.email, 'submitted', null)
@@ -242,8 +259,8 @@ export function registerMigrations(router: Router) {
       if (action === 'submit') {
         if (!can(user.role, 'edit')) throw forbidden('Your role does not permit this action.')
       } else if (action === 'apply') {
-        if (!canRelease(asJson<string[]>(mig.releasers, []), user)) {
-          throw forbidden('Only an admin or a designated releaser can apply this migration.')
+        if (!canRelease(!!mig.deploy_gated, asJson<string[]>(mig.releasers, []), user)) {
+          throw releaseDenied(mig, 'apply')
         }
       } else {
         const approvers = asJson<string[]>(mig.approvers, [])
@@ -328,8 +345,8 @@ export function registerMigrations(router: Router) {
   router.post('/api/migrations/:id/schedule', async (ctx: Ctx) => {
     const user = requireUser(ctx)
     const mig = await loadMig(user.id, ctx.params.id)
-    if (!canRelease(asJson<string[]>(mig.releasers, []), user)) {
-      throw forbidden('Only an admin or a designated releaser can schedule this migration.')
+    if (!canRelease(!!mig.deploy_gated, asJson<string[]>(mig.releasers, []), user)) {
+      throw releaseDenied(mig, 'schedule')
     }
     if (mig.status !== 'approved') throw badRequest('Only approved migrations can be scheduled.')
     const { scheduled_for } = await readJson<{ scheduled_for?: string }>(ctx.req)
@@ -346,8 +363,8 @@ export function registerMigrations(router: Router) {
   router.post('/api/migrations/:id/cancel-schedule', async (ctx: Ctx) => {
     const user = requireUser(ctx)
     const mig = await loadMig(user.id, ctx.params.id)
-    if (!canRelease(asJson<string[]>(mig.releasers, []), user)) {
-      throw forbidden('Only an admin or a designated releaser can cancel this schedule.')
+    if (!canRelease(!!mig.deploy_gated, asJson<string[]>(mig.releasers, []), user)) {
+      throw releaseDenied(mig, 'cancel the schedule for')
     }
     await execute('UPDATE migrations SET scheduled_for = NULL, scheduled_by = NULL WHERE id = :id', { id: mig.id })
     await addEvent(mig.id, user.email, 'schedule_cancelled', null)

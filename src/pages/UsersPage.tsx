@@ -10,11 +10,12 @@ import { Avatar } from '../components/Avatar'
 import { Dropdown } from '../components/Dropdown'
 import { Button, Card, ErrorBanner, Field, Modal, Spinner, TextInput } from '../components/ui'
 
-const ROLES: UserRole[] = ['admin', 'editor', 'viewer']
+const ROLES: UserRole[] = ['admin', 'editor', 'deployer', 'viewer']
 
 const ROLE_HINTS: Record<UserRole, string> = {
   admin: 'Full access — approve & apply migrations, manage users, connections & settings.',
   editor: 'Create & submit migrations, add reviewers, comment, run read queries, pull schema.',
+  deployer: 'Read-only, plus can apply deployment migrations.',
   viewer: 'Read-only — browse schema and run read queries.',
 }
 
