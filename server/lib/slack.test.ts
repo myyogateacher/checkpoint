@@ -7,6 +7,8 @@ const base: MigrationBlockInput = {
   dbName: 'main_db',
   submittedBy: 'Harsha Hota',
   url: 'https://cp.example.com/migrations/abc',
+  deployGated: false,
+  reviewerMentions: [],
 }
 
 // Blocks are intentionally typed as unknown[] on the API; cast to inspect shape.
@@ -33,6 +35,30 @@ describe('buildMigrationBlocks', () => {
 
   test('escapes pipes and collapses newlines in cell values', () => {
     expect(build({ title: 'a | b\nc' })[0].text).toContain('**Title:** a \\| b c')
+  })
+
+  test('deployment migration prefixes the title line', () => {
+    const blocks = build({ deployGated: true })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].type).toBe('markdown')
+    expect(blocks[0].text).toContain('🚢 **Deployment** - **Title:** Testing')
+  })
+
+  test('reviewer mentions are tagged in a section below the table', () => {
+    const blocks = build({ reviewerMentions: ['<@U1>', 'plain@myt.com'] })
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].type).toBe('markdown')
+    expect(blocks[0].text).toContain('**Title:** Testing')
+    expect(blocks[1].type).toBe('section')
+    expect(blocks[1].text.text).toBe('Reviewers: <@U1> plain@myt.com')
+  })
+
+  test('gated with reviewers: prefixed table block, reviewers below', () => {
+    const blocks = build({ deployGated: true, reviewerMentions: ['<@U1>'] })
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].type).toBe('markdown')
+    expect(blocks[0].text).toContain('🚢 **Deployment** - **Title:** Testing')
+    expect(blocks[1].text.text).toBe('Reviewers: <@U1>')
   })
 })
 
@@ -64,6 +90,15 @@ describe('buildThreadReplyBlocks', () => {
 
   test('ignores blank note and null error', () => {
     expect(reply({ note: '   ', error: null })).toHaveLength(1)
+  })
+
+  test('ccs the creator on its own line when provided', () => {
+    const blocks = reply({ cc: '<@U42>' })
+    expect(blocks[0].text.text).toBe(':white_check_mark: *Approved* by <@U9> · <https://cp/m/1|View migration>\ncc <@U42>')
+  })
+
+  test('no cc line when cc is null', () => {
+    expect(reply({ cc: null })[0].text.text).not.toContain('cc ')
   })
 
   test('truncates a very long error under the Block Kit limit', () => {

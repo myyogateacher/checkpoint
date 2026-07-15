@@ -58,4 +58,14 @@ export const MIGRATIONS: Migration[] = [
          ADD COLUMN slack_channel_id VARCHAR(64) DEFAULT NULL`,
     ],
   },
+  {
+    version: 4,
+    name: 'deployer_role_and_deploy_gated',
+    statements: [
+      // Deployment migrations (PROD-7464): ship together with a code deploy and may
+      // only be applied by an admin or the new deployer role.
+      `ALTER TABLE users MODIFY COLUMN role ENUM('admin','editor','deployer','viewer') NOT NULL DEFAULT 'viewer'`,
+      `ALTER TABLE migrations ADD COLUMN deploy_gated TINYINT(1) NOT NULL DEFAULT 0`,
+    ],
+  },
 ]

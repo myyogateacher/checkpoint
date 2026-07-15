@@ -37,6 +37,7 @@ export { ENGINE_LABELS, ENGINE_STYLES } from './engines'
 export const ROLE_STYLES: Record<UserRole, string> = {
   admin: 'border-indigo-200/70 bg-indigo-50/80 text-indigo-700',
   editor: 'border-blue-200/70 bg-blue-50/80 text-blue-700',
+  deployer: 'border-teal-200/70 bg-teal-50/80 text-teal-700',
   viewer: 'border-slate-200/70 bg-slate-50/80 text-slate-600',
 }
 
@@ -72,9 +73,11 @@ export const AUDIT_FILTERS: Array<{ value: AuditCategory | 'all'; label: string;
 ]
 
 // Capability matrix mirrored on the backend; the client uses it to gate UI.
-export function can(role: UserRole | undefined, capability: 'edit' | 'approve' | 'manage_users'): boolean {
+export function can(role: UserRole | undefined, capability: 'edit' | 'approve' | 'manage_users' | 'apply_gated'): boolean {
   if (!role) return false
   if (role === 'admin') return true
   if (role === 'editor') return capability === 'edit'
+  // Deployers apply deployment (deploy-gated) migrations and nothing else.
+  if (role === 'deployer') return capability === 'apply_gated'
   return false
 }

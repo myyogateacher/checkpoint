@@ -15,6 +15,11 @@ export function StatusBadge({ status }: { status: MigrationStatus }) {
   return <Badge className={meta.style}>{meta.label}</Badge>
 }
 
+// Deployment migration marker — teal, matching the deployer role badge.
+export function DeploymentBadge() {
+  return <Badge className="border-teal-200/70 bg-teal-50/80 text-teal-700 dark:border-teal-400/40 dark:bg-teal-500/25 dark:text-teal-200">🚢 Deployment</Badge>
+}
+
 const CONN_STYLES = {
   read: 'border-emerald-200/70 bg-emerald-50/80 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/25 dark:text-emerald-200',
   write: 'border-rose-200/70 bg-rose-50/80 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/25 dark:text-rose-200',

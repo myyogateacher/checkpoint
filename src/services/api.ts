@@ -213,6 +213,8 @@ export const api = {
     description: string | null
     queries: string[]
     submit: boolean
+    deploy_gated?: boolean
+    reviewers?: string[]
   }): Promise<Migration> {
     return request<Migration>('/api/migrations', { method: 'POST', body: JSON.stringify(input) })
   },

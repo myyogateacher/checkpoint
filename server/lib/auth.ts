@@ -3,13 +3,15 @@ import { forbidden, unauthorized } from './http'
 import { query } from '../db/pool'
 import type { SessionUser, UserRole } from '../types'
 
-export type Capability = 'edit' | 'approve' | 'manage_users'
+export type Capability = 'edit' | 'approve' | 'manage_users' | 'apply_gated'
 
 // Capability matrix — mirrors the client's lib/format.ts `can()`.
 export function can(role: UserRole | undefined, capability: Capability): boolean {
   if (!role) return false
   if (role === 'admin') return true
   if (role === 'editor') return capability === 'edit'
+  // Deployers apply deployment (deploy-gated) migrations and nothing else.
+  if (role === 'deployer') return capability === 'apply_gated'
   return false
 }
 

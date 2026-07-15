@@ -33,25 +33,29 @@ Migration ── targets one Database ── { queries[], reviewers[], comments[
 
 ## 2. Roles & RBAC
 
-Roles: `admin`, `editor`, `viewer`. The client gates UI via
+Roles: `admin`, `editor`, `deployer`, `viewer`. The client gates UI via
 `can(role, capability)` ([`src/lib/format.ts`](../src/lib/format.ts)); the
 **backend must enforce the same matrix server-side** (UI gating is not security).
 
-| Capability                                   | viewer | editor | admin |
-| -------------------------------------------- | :----: | :----: | :---: |
-| Browse projects/schema, run read queries     |   ✓    |   ✓    |   ✓   |
-| Pull schema                                   |        |   ✓    |   ✓   |
-| Create / submit migration                     |        |   ✓    |   ✓   |
-| Add/remove reviewers, comment                 |        |   ✓    |   ✓   |
-| Approve / reject migration                    |        |        |   ✓   |
-| Apply migration                               |        |        |   ✓   |
-| Create projects/databases, edit read conn     |        |   ✓    |   ✓   |
-| Edit write connection                         |        |        |   ✓   |
-| Manage users, edit settings                   |        |        |   ✓   |
+| Capability                                   | viewer | deployer | editor | admin |
+| -------------------------------------------- | :----: | :------: | :----: | :---: |
+| Browse projects/schema, run read queries     |   ✓    |    ✓     |   ✓    |   ✓   |
+| Pull schema                                   |        |          |   ✓    |   ✓   |
+| Create / submit migration                     |        |          |   ✓    |   ✓   |
+| Add/remove reviewers, comment                 |        |          |   ✓    |   ✓   |
+| Approve / reject migration                    |        |          |        |   ✓   |
+| Apply migration                               |        |          |        |   ✓   |
+| Apply **deployment** migration                |        |    ✓     |        |   ✓   |
+| Create projects/databases, edit read conn     |        |          |   ✓    |   ✓   |
+| Edit write connection                         |        |          |        |   ✓   |
+| Manage users, edit settings                   |        |          |        |   ✓   |
 
 > Capability mapping today: `edit` → editor+admin, `approve` & `manage_users` →
-> admin only. Revisit whether a dedicated "reviewer/approver" tier is needed
-> (see Open Questions).
+> admin only, `apply_gated` → deployer+admin. A migration created with the
+> **deployment** checkbox (`migrations.deploy_gated`) reviews as usual, but only
+> `apply_gated` roles may apply/schedule it — the project releasers list is not
+> honored for deployment migrations. Revisit whether a dedicated
+> "reviewer/approver" tier is needed (see Open Questions).
 
 ---
 
@@ -78,7 +82,7 @@ Checkpoint keeps its own metadata DB (see `APP_DATABASE_URL`,
 reached via their stored connections. Suggested tables (Postgres):
 
 ### users
-`id, email (unique), name, picture, role (admin|editor|viewer), is_banned,
+`id, email (unique), name, picture, role (admin|editor|deployer|viewer), is_banned,
 is_allowlisted, last_login_at, created_at`
 
 ### projects

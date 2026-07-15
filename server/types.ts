@@ -1,7 +1,7 @@
 // Server-side domain types. These mirror the response shapes the frontend
 // expects (see src/types.ts) — they are the API contract.
 
-export type UserRole = 'admin' | 'editor' | 'viewer'
+export type UserRole = 'admin' | 'editor' | 'deployer' | 'viewer'
 export type ConnectionMode = 'read' | 'write'
 export type MigrationStatus =
   | 'draft'
