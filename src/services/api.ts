@@ -5,6 +5,9 @@
 // ---------------------------------------------------------------------------
 
 import type {
+  ApiToken,
+  ApiTokenCreated,
+  ApiTokenScope,
   AppSettings,
   AuditLogEntry,
   Connection,
@@ -243,6 +246,18 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(sections),
     })
+  },
+
+  // --- API tokens -----------------------------------------------------------
+  getApiTokens(): Promise<ApiToken[]> {
+    return request<ApiToken[]>('/api/tokens')
+  },
+  // The response carries the full secret exactly once; it is never retrievable again.
+  createApiToken(input: { name: string; scopes: ApiTokenScope[]; expires_in_days: number | null }): Promise<ApiTokenCreated> {
+    return request<ApiTokenCreated>('/api/tokens', { method: 'POST', body: JSON.stringify(input) })
+  },
+  revokeApiToken(id: string): Promise<null> {
+    return request<null>(`/api/tokens/${id}`, { method: 'DELETE' })
   },
 
   // --- Settings -------------------------------------------------------------

@@ -243,7 +243,9 @@ export function registerMigrations(router: Router) {
     await addEvent(id, user.email, 'created', null)
     if (body.submit) await addEvent(id, user.email, 'submitted', null)
     if (autoApproved) await addEvent(id, user.email, 'approve', 'Auto-approved — project requires no approvals.')
-    await writeAudit({ actor: user, orgId: db.org_id, action: body.submit ? 'migration.submit' : 'migration.create', entityType: 'migration', entityId: id, entityLabel: body.title.trim(), summary: `${body.submit ? 'Submitted' : 'Created'} migration on ${db.name}` })
+    // Token-authenticated creates are called out in the audit trail.
+    const via = ctx.apiToken ? ` via API token "${ctx.apiToken.name}"` : ''
+    await writeAudit({ actor: user, orgId: db.org_id, action: body.submit ? 'migration.submit' : 'migration.create', entityType: 'migration', entityId: id, entityLabel: body.title.trim(), summary: `${body.submit ? 'Submitted' : 'Created'} migration on ${db.name}${via}` })
     if (body.submit) await notifyMigration(db.org_id, 'submit', id, user.email, env.appBaseUrl || ctx.url.origin)
     if (autoApproved) await notifyMigration(db.org_id, 'approve', id, user.email, env.appBaseUrl || ctx.url.origin)
     return json(await fullMigration(await loadMig(user.id, id)))

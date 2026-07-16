@@ -9,6 +9,7 @@ import {
   FaCodeBranch,
   FaCog,
   FaHome,
+  FaKey,
   FaMoon,
   FaPlay,
   FaShieldAlt,
@@ -124,6 +125,7 @@ function SidebarContent({
           <NavItem to="/team" icon={<FaUsers size={14} />} label="Team" collapsed={collapsed} onNavigate={onNavigate} />
         ) : null}
         <NavItem to="/audit" icon={<FaClipboardList size={14} />} label="Audit Log" collapsed={collapsed} onNavigate={onNavigate} />
+        <NavItem to="/tokens" icon={<FaKey size={14} />} label="API Tokens" collapsed={collapsed} onNavigate={onNavigate} />
         {can(user?.role, 'manage_users') ? (
           <NavItem to="/validation-rules" icon={<FaShieldAlt size={14} />} label="Validation Rules" collapsed={collapsed} onNavigate={onNavigate} />
         ) : null}

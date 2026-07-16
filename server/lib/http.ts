@@ -11,6 +11,8 @@ export interface Ctx {
   // Populated by the auth middleware.
   user?: import('../types').SessionUser
   sessionId?: string
+  // Set instead of sessionId when the request authenticated with a Bearer token.
+  apiToken?: { id: string; name: string; scopes: import('../types').ApiTokenScope[] }
 }
 
 export type Handler = (ctx: Ctx) => Promise<Response> | Response
@@ -74,6 +76,8 @@ export function cookieHeader(
 
 interface Route {
   method: string
+  // The path as registered (e.g. "/api/migrations/:id"); echoed from match for per-route policy.
+  path: string
   // Path split into segments; `:name` denotes a param.
   segments: string[]
   handler: Handler
@@ -83,7 +87,7 @@ export class Router {
   private routes: Route[] = []
 
   add(method: string, path: string, handler: Handler) {
-    this.routes.push({ method, segments: path.split('/').filter(Boolean), handler })
+    this.routes.push({ method, path, segments: path.split('/').filter(Boolean), handler })
   }
   get(path: string, h: Handler) { this.add('GET', path, h) }
   post(path: string, h: Handler) { this.add('POST', path, h) }
@@ -91,7 +95,7 @@ export class Router {
   patch(path: string, h: Handler) { this.add('PATCH', path, h) }
   delete(path: string, h: Handler) { this.add('DELETE', path, h) }
 
-  match(method: string, pathname: string): { handler: Handler; params: Params } | null {
+  match(method: string, pathname: string): { handler: Handler; params: Params; path: string } | null {
     const segs = pathname.split('/').filter(Boolean)
     for (const r of this.routes) {
       if (r.method !== method || r.segments.length !== segs.length) continue
@@ -102,7 +106,7 @@ export class Router {
         if (rs.startsWith(':')) params[rs.slice(1)] = decodeURIComponent(segs[i])
         else if (rs !== segs[i]) { ok = false; break }
       }
-      if (ok) return { handler: r.handler, params }
+      if (ok) return { handler: r.handler, params, path: r.path }
     }
     return null
   }

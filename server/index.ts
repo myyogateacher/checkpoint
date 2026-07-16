@@ -6,6 +6,15 @@ import { initDb } from './db/init'
 import { startScheduler } from './lib/scheduler'
 import { Router, HttpError, json, type Ctx } from './lib/http'
 import { getSessionUser } from './lib/session'
+import {
+  TOKEN_ROUTES,
+  rateLimitAllows,
+  readBearerToken,
+  recordRateLimitFailure,
+  resolveApiToken,
+  touchApiToken,
+  type RateWindow,
+} from './lib/apiTokens'
 
 import { registerAuth } from './modules/auth'
 import { registerOrganizations } from './modules/organizations'
@@ -20,6 +29,7 @@ import { registerSettings } from './modules/settings'
 import { registerValidationRules } from './modules/validationRules'
 import { registerUsers } from './modules/users'
 import { registerAudit } from './modules/audit'
+import { registerApiTokens } from './modules/apiTokens'
 
 const router = new Router()
 registerAuth(router)
@@ -36,6 +46,7 @@ registerSettings(router)
 registerValidationRules(router)
 registerUsers(router)
 registerAudit(router)
+registerApiTokens(router)
 
 const distDir = `${import.meta.dir}/../dist`
 
@@ -62,26 +73,61 @@ function corsHeaders(origin: string): Record<string, string> {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   }
 }
 
-async function handleApi(req: Request, url: URL): Promise<Response> {
+// Failed Bearer attempts per client IP, so an attacker can't grind token guesses.
+const bearerFailures = new Map<string, RateWindow>()
+
+// Bearer auth for a matched route: null → no chk_ bearer (use session); else ctx fields or an error Response.
+async function authenticateBearer(
+  req: Request,
+  routeKey: string,
+  clientIp: string,
+): Promise<{ user: Ctx['user']; apiToken: Ctx['apiToken'] } | Response | null> {
+  const secret = readBearerToken(req)
+  if (secret === null) return null
+
+  // Allowlist first: off-list requests must not cost a DB lookup or a rate-window hit.
+  const requiredScope = TOKEN_ROUTES[routeKey]
+  if (!requiredScope) {
+    return json({ error: 'This endpoint does not support API token authentication.' }, { status: 403 })
+  }
+  if (!rateLimitAllows(bearerFailures, clientIp, Date.now())) {
+    return json({ error: 'Too many failed token attempts. Try again shortly.' }, { status: 429 })
+  }
+  const resolved = await resolveApiToken(secret)
+  if (!resolved) {
+    recordRateLimitFailure(bearerFailures, clientIp, Date.now())
+    return json({ error: 'Invalid, expired, or revoked API token.' }, { status: 401 })
+  }
+  if (!resolved.token.scopes.includes(requiredScope)) {
+    return json({ error: `This token lacks the ${requiredScope} scope.` }, { status: 403 })
+  }
+  // last_used_at is display-only bookkeeping — never block or fail the request on it.
+  void touchApiToken(resolved.token.id).catch((err) => console.error('token touch failed:', err))
+  return { user: resolved.user, apiToken: resolved.token }
+}
+
+async function handleApi(req: Request, url: URL, clientIp: string): Promise<Response> {
   if (url.pathname === '/api/health') return json({ status: 'ok', timestamp: new Date().toISOString() })
 
   const match = router.match(req.method, url.pathname)
   if (!match) return json({ error: 'Not found' }, { status: 404 })
 
-  const session = await getSessionUser(req)
-  const ctx: Ctx = {
-    req,
-    url,
-    params: match.params,
-    query: url.searchParams,
-    user: session?.user,
-    sessionId: session?.sessionId,
+  const ctx: Ctx = { req, url, params: match.params, query: url.searchParams }
+  const bearer = await authenticateBearer(req, `${req.method} ${match.path}`, clientIp)
+  if (bearer instanceof Response) return bearer
+  if (bearer) {
+    ctx.user = bearer.user
+    ctx.apiToken = bearer.apiToken
+  } else {
+    const session = await getSessionUser(req)
+    ctx.user = session?.user
+    ctx.sessionId = session?.sessionId
   }
   try {
     return await match.handler(ctx)
@@ -105,7 +151,7 @@ startScheduler()
 
 const server = Bun.serve({
   port: env.port,
-  async fetch(req) {
+  async fetch(req, srv) {
     const url = new URL(req.url)
     const allowOrigin = url.pathname.startsWith('/api/') ? resolveCorsOrigin(req) : null
 
@@ -116,7 +162,8 @@ const server = Bun.serve({
 
     try {
       if (url.pathname.startsWith('/api/')) {
-        const res = await handleApi(req, url)
+        // Socket address, not x-forwarded-for — rate-limit keys must not be client-spoofable.
+        const res = await handleApi(req, url, srv.requestIP(req)?.address ?? 'unknown')
         if (allowOrigin) {
           for (const [k, v] of Object.entries(corsHeaders(allowOrigin))) res.headers.set(k, v)
         }

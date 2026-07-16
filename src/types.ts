@@ -257,6 +257,27 @@ export interface ManagedUser {
   is_self: boolean
 }
 
+// --- API tokens ---------------------------------------------------------------
+
+export type ApiTokenScope = 'migrations:read' | 'migrations:write'
+
+export interface ApiToken {
+  id: string
+  name: string
+  // Display stub of the secret (e.g. "chk_Ab12Cd34"); the full token is never stored.
+  token_prefix: string
+  scopes: ApiTokenScope[]
+  created_at: string
+  expires_at: string | null
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+// Returned only from create; the secret is never retrievable again.
+export interface ApiTokenCreated extends ApiToken {
+  token: string
+}
+
 // --- Settings ---------------------------------------------------------------
 
 export interface AppSettings {

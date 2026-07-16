@@ -26,6 +26,7 @@ import { MigrationsListPage } from './pages/MigrationsListPage'
 import { QueryStudioPage } from './pages/QueryStudioPage'
 import { SavedQueriesPage } from './pages/SavedQueriesPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { ApiTokensPage } from './pages/ApiTokensPage'
 import { ValidationRulesPage } from './pages/ValidationRulesPage'
 import { UsersPage } from './pages/UsersPage'
 import { AuditLogPage } from './pages/AuditLogPage'
@@ -197,6 +198,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <AuditLogPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/tokens"
+        element={
+          <RequireAuth>
+            <ApiTokensPage />
           </RequireAuth>
         }
       />
