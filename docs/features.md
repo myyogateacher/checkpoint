@@ -72,6 +72,10 @@ Roles: `admin`, `editor`, `deployer`, `viewer`. The client gates UI via
 - `POST /api/auth/logout` → clears session (`204`).
 - Session: signed, httpOnly cookie. On first successful login, record
   `last_login_at`.
+- **API tokens (programmatic access):** `Authorization: Bearer chk_…` resolves
+  to the owning user and reuses the same RBAC — only routes in the token
+  allowlist are reachable (migration read/create; see `docs/api.md`). Token
+  management itself is session-only.
 
 ---
 
@@ -127,6 +131,12 @@ created_at, approved_by, approved_at, applied_at`
 ### audit_logs
 `id, actor_email, actor_name, action, entity_type, entity_id, entity_label,
 summary, created_at` — system-wide (see §11).
+
+### api_tokens
+`id, user_id → users, name, token_hash (sha256, unique), token_prefix,
+scopes (json), expires_at, last_used_at, revoked_at, created_at`
+Only the hash is stored; the secret is shown once at creation. Revocation is
+soft (`revoked_at`) so the row survives for the audit trail.
 
 ### settings
 Single row (or key/value): email (SMTP) + Slack config (see §10).
@@ -227,6 +237,10 @@ draft ──submit──► pending_approval ──approve──► approved ─
 > The four transition routes are `/:id/{submit,approve,reject,apply}` to mirror
 > the client's `transitionMigration(id, action)`.
 
+> API-token access: `GET /api/migrations`, `GET /api/migrations/:id`
+> (`migrations:read`) and `POST /api/migrations` (`migrations:write`) also
+> accept Bearer auth. Transitions never do — approve/apply stays in the UI.
+
 ---
 
 ## 9. Users
@@ -239,6 +253,16 @@ draft ──submit──► pending_approval ──approve──► approved ─
 | DELETE | `/api/users/:id` | manage_users | remove (cannot remove self) |
 
 (The legacy ban flag exists in the data model; no UI yet.)
+
+### API tokens (self-service, any signed-in user)
+
+| Method | Path | Role | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/tokens` | any | caller's tokens (name, prefix, scopes, expiry, last used) |
+| POST | `/api/tokens` | any | `{ name, scopes, expires_in_days? }` → token row + **full secret, once** |
+| DELETE | `/api/tokens/:id` | any (own) | soft-revoke; another user's id → 404 |
+
+Session-only by design: a token can never mint, list, or revoke tokens.
 
 ---
 
@@ -295,6 +319,10 @@ Every mutating action across the system should write an audit entry.
 - Session cookies: signed, httpOnly, SameSite; CSRF protection for state-changing
   routes.
 - Rate-limit query execution and OAuth callbacks.
+- API tokens: store only the SHA-256 hash; return the secret once; scope-gate an
+  explicit route allowlist (never approve/apply); rate-limit failed Bearer
+  attempts; check expiry/revocation/ban on every resolve; audit create/revoke
+  and token-authenticated writes.
 
 ---
 

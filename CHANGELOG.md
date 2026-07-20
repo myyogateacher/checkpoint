@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **API access via personal access tokens** — create and read migrations
+  programmatically (`Authorization: Bearer chk_…`). Tokens are scoped
+  (`migrations:read` / `migrations:write`), act as their owner under the same
+  RBAC, and can never approve or apply a migration. Only the token's SHA-256
+  hash is stored; failed attempts are rate-limited; creation, revocation, and
+  token-authenticated writes are audit-logged. See `docs/api.md`.
+- **API Tokens page** — self-service token management for every user: create
+  with scopes + optional expiry (30/60/90 days or none), one-time secret
+  reveal with copy, revoke with confirmation, last-used tracking.
+
 ## [1.2.0] - 2026-07-15
 
 ### Added

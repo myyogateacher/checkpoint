@@ -58,7 +58,9 @@ and moves through a lifecycle: `draft → pending_approval → approved → appl
 9. **User management** — invite users, assign roles.
 10. **Audit log** — system-wide, filterable record of actions.
 11. **Settings** — email (SMTP) + Slack notification configuration (tabbed).
-12. **UX** — dark mode, responsive mobile drawer, breadcrumbs, toasts.
+12. **API tokens** — self-service personal access tokens for programmatic
+    access (create migrations from CI); see [`docs/api.md`](docs/api.md).
+13. **UX** — dark mode, responsive mobile drawer, breadcrumbs, toasts.
 
 See [`docs/features.md`](docs/features.md) for the full feature + data-model +
 API specification used to plan the backend.
@@ -142,7 +144,25 @@ Schema introspection, read queries, and migration apply connect to the managed
 > **First sign-in** bootstraps an admin (the first Google account). After that,
 > users must be invited. With `VITE_ORG` set, everyone joins that single org.
 
+## API access
+
+Automated callers (CI, scripts, tools) authenticate with **personal access
+tokens** instead of a browser session. Create one in the app under **API
+Tokens** (the secret is shown once), then:
+
+```bash
+curl -sS https://your-checkpoint/api/migrations \
+  -H "Authorization: Bearer $CHECKPOINT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"database_id":"db_…","title":"Add index","queries":["CREATE INDEX …"],"submit":true}'
+```
+
+The migration lands in the normal review flow. Tokens are scoped
+(`migrations:read` / `migrations:write`), act as their owner (same RBAC), and
+can never approve or apply a migration. Full reference: [`docs/api.md`](docs/api.md).
+
 ## Related docs
 
 - [`AGENTS.md`](AGENTS.md) — conventions for AI agents / contributors.
 - [`docs/features.md`](docs/features.md) — backend planning spec.
+- [`docs/api.md`](docs/api.md) — REST API reference (token auth, scopes, endpoints).

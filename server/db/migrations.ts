@@ -68,4 +68,26 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE migrations ADD COLUMN deploy_gated TINYINT(1) NOT NULL DEFAULT 0`,
     ],
   },
+  {
+    version: 5,
+    name: 'api_tokens',
+    statements: [
+      // Personal access tokens (PROD-7495): hash-only storage, soft revoke via revoked_at.
+      `CREATE TABLE IF NOT EXISTS api_tokens (
+         id            VARCHAR(40)  NOT NULL PRIMARY KEY,
+         user_id       VARCHAR(40)  NOT NULL,
+         name          VARCHAR(100) NOT NULL,
+         token_hash    CHAR(64)     NOT NULL,
+         token_prefix  VARCHAR(16)  NOT NULL,
+         scopes        JSON         NOT NULL,
+         expires_at    DATETIME     DEFAULT NULL,
+         last_used_at  DATETIME     DEFAULT NULL,
+         revoked_at    DATETIME     DEFAULT NULL,
+         created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE KEY uq_api_tokens_hash (token_hash),
+         KEY idx_api_tokens_user (user_id),
+         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    ],
+  },
 ]
