@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-10
+
 ### Added
 
 - **MCP server** (`POST /api/mcp`) — connect an AI agent to Checkpoint over
@@ -134,7 +136,8 @@ shipping schema changes with review and governance built in.
 - **Platform** — Bun + React/TypeScript, schema auto-migration on boot,
   email/Slack notifications, and an audit log across all sensitive actions.
 
-[Unreleased]: https://github.com/myyogateacher/checkpoint/compare/1.2.0...HEAD
+[Unreleased]: https://github.com/myyogateacher/checkpoint/compare/1.3.0...HEAD
+[1.3.0]: https://github.com/myyogateacher/checkpoint/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/myyogateacher/checkpoint/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/myyogateacher/checkpoint/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/myyogateacher/checkpoint/releases/tag/1.0.0
