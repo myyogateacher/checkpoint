@@ -218,6 +218,10 @@ draft ──submit──► pending_approval ──approve──► approved ─
 ```
 
 - A migration has **≥1 ordered SQL statement**.
+- Each statement block holds **exactly one statement** — every block is applied
+  as a single query, so `;`-separated blocks are rejected at creation (client
+  inline validation and `POST /api/migrations` alike). A single trailing `;` is
+  fine; `;` inside string literals and comments doesn't count.
 - `submit`: author/editor moves `draft → pending_approval`.
 - `approve` / `reject`: **admin** or a designated approver (incl. via the `*`
   sentinel); sets `approved_by`/`approved_at` or `rejected`. `reject` carries a

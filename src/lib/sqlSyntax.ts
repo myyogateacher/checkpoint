@@ -20,13 +20,70 @@ export function engineSupportsSyntaxCheck(engine: DatabaseEngine): boolean {
   return engine in PARSER_DIALECT
 }
 
+// Kept identical to the server's message (server/lib/sqlSyntax.ts).
+export const MULTI_STATEMENT_ERROR =
+  'Multiple SQL statements in one block — use one statement per block (add another statement box).'
+
+// Blank out string literals ('…', "…", `…`) and comments (--, #, /* */) so a
+// `;` scan only sees statement separators. Single pass, because a `--` inside a
+// string isn't a comment and a quote inside a comment doesn't open a string.
+function stripLiteralsAndComments(sql: string): string {
+  let out = ''
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i]
+    if (c === "'" || c === '"' || c === '`') {
+      i++
+      for (; i < sql.length; i++) {
+        // Backslash escapes (MySQL) and the doubled-quote form both continue
+        // the literal rather than closing it.
+        if (c !== '`' && sql[i] === '\\') i++
+        else if (sql[i] === c) {
+          if (sql[i + 1] === c) i++
+          else break
+        }
+      }
+      continue
+    }
+    if (c === '-' && sql[i + 1] === '-') {
+      while (i < sql.length && sql[i] !== '\n') i++
+      out += '\n'
+      continue
+    }
+    if (c === '#') {
+      while (i < sql.length && sql[i] !== '\n') i++
+      out += '\n'
+      continue
+    }
+    if (c === '/' && sql[i + 1] === '*') {
+      i += 2
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
+      i++
+      out += ' '
+      continue
+    }
+    out += c
+  }
+  return out
+}
+
+// True when the block holds more than one statement — a `;` with anything but
+// whitespace after it. A single trailing semicolon stays valid.
+function hasMultipleStatements(sql: string): boolean {
+  return /;\s*\S/.test(stripLiteralsAndComments(sql))
+}
+
 // Parse a single SQL statement; returns a human-readable syntax error, or null
 // when the statement parses (or the engine has no grammar to check against).
+// Multi-statement blocks are always rejected — each block is applied as one
+// query on a connection without multipleStatements.
 export function checkSyntax(sql: string, engine: DatabaseEngine): string | null {
+  if (hasMultipleStatements(sql)) return MULTI_STATEMENT_ERROR
   const database = PARSER_DIALECT[engine]
   if (!database) return null
   try {
-    new Parser().astify(sql, { database })
+    const ast = new Parser().astify(sql, { database })
+    // astify() returns an array when the SQL holds several statements.
+    if (Array.isArray(ast) && ast.length > 1) return MULTI_STATEMENT_ERROR
     return null
   } catch (err) {
     const e = err as { message?: string; location?: { start?: { line: number; column: number } } }

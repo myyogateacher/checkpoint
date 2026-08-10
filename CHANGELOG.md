@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behavior is preserved. The `Migration` payload now exposes the resolved
   `self_approvers` instead of `allow_self_approval`.
 
+### Fixed
+
+- **Multi-statement blocks are rejected at validation time** — a statement box
+  holding several `;`-separated statements used to pass the syntax pre-check and
+  then fail on apply (each block runs as a single query, on a connection without
+  `multipleStatements`), leaving partially applied migrations. Creation now fails
+  with "use one statement per block" on both the client and `POST
+  /api/migrations`, for every engine — including those with no parser grammar.
+
 ## [1.2.0] - 2026-07-15
 
 ### Added
