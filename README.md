@@ -59,7 +59,9 @@ and moves through a lifecycle: `draft → pending_approval → approved → appl
 10. **Audit log** — system-wide, filterable record of actions.
 11. **Settings** — email (SMTP) + Slack notification configuration (tabbed).
 12. **API tokens** — self-service personal access tokens for programmatic
-    access (create migrations from CI); see [`docs/api.md`](docs/api.md).
+    access (create migrations from CI); see [`docs/api.md`](docs/api.md). The
+    same tokens authenticate the **MCP server** for AI agents; see
+    [`docs/mcp.md`](docs/mcp.md).
 13. **UX** — dark mode, responsive mobile drawer, breadcrumbs, toasts.
 
 See [`docs/features.md`](docs/features.md) for the full feature + data-model +
@@ -157,12 +159,28 @@ curl -sS https://your-checkpoint/api/migrations \
   -d '{"database_id":"db_…","title":"Add index","queries":["CREATE INDEX …"],"submit":true}'
 ```
 
-The migration lands in the normal review flow. Tokens are scoped
-(`migrations:read` / `migrations:write`), act as their owner (same RBAC), and
-can never approve or apply a migration. Full reference: [`docs/api.md`](docs/api.md).
+The migration lands in the normal review flow. Tokens are scoped, act as their
+owner (same RBAC), and can never approve or apply a migration. Full reference:
+[`docs/api.md`](docs/api.md).
+
+### MCP (AI agents)
+
+The same tokens authenticate an **MCP server** at `POST /api/mcp` (Streamable
+HTTP, stateless), so an agent can read your catalog, migrations and audit trail,
+and open migrations for review:
+
+```bash
+claude mcp add --transport http checkpoint \
+  https://your-checkpoint/api/mcp --header "Authorization: Bearer $CHECKPOINT_TOKEN"
+```
+
+There is no tool for approve, reject, apply, schedule, or arbitrary SQL — those
+stay human decisions made in the UI, enforced server-side in depth. Full
+reference: [`docs/mcp.md`](docs/mcp.md).
 
 ## Related docs
 
 - [`AGENTS.md`](AGENTS.md) — conventions for AI agents / contributors.
 - [`docs/features.md`](docs/features.md) — backend planning spec.
 - [`docs/api.md`](docs/api.md) — REST API reference (token auth, scopes, endpoints).
+- [`docs/mcp.md`](docs/mcp.md) — MCP server reference (tools, scopes, excluded verbs).

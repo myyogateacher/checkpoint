@@ -264,7 +264,12 @@ export interface ManagedUser {
 
 // --- API tokens ---------------------------------------------------------------
 
-export type ApiTokenScope = 'migrations:read' | 'migrations:write'
+export type ApiTokenScope =
+  | 'migrations:read'
+  | 'migrations:write'
+  | 'catalog:read'
+  | 'queries:read'
+  | 'audit:read'
 
 export interface ApiToken {
   id: string

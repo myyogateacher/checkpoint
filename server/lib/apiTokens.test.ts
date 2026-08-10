@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import {
   API_TOKEN_SCOPES,
   TOKEN_ROUTES,
+  effectiveScopes,
+  satisfiesRequirement,
   generateApiToken,
   hashApiToken,
   isValidScopeList,
@@ -85,13 +87,78 @@ describe('isValidScopeList', () => {
 })
 
 describe('TOKEN_ROUTES', () => {
-  test('exposes only migration read/create — never approve, apply, or token management', () => {
+  test('exposes only migration read/create and the MCP endpoint', () => {
     expect(Object.keys(TOKEN_ROUTES).sort()).toEqual([
+      'DELETE /api/mcp',
+      'GET /api/mcp',
       'GET /api/migrations',
       'GET /api/migrations/:id',
+      'POST /api/mcp',
       'POST /api/migrations',
     ])
     expect(TOKEN_ROUTES['POST /api/migrations']).toBe('migrations:write')
+  })
+
+  // The product invariant: no governance verb is ever reachable with a token.
+  // (modules/migrations.ts also refuses them at the point of action.)
+  test('no governance verb is token-reachable', () => {
+    for (const key of Object.keys(TOKEN_ROUTES)) {
+      expect(key).not.toMatch(/\/migrations\/:id\/(approve|reject|apply|schedule|cancel-schedule|submit)/)
+    }
+  })
+
+  test('token management is never token-reachable', () => {
+    for (const key of Object.keys(TOKEN_ROUTES)) expect(key).not.toMatch(/\/api\/tokens/)
+  })
+
+  test('every requirement names only known scopes', () => {
+    for (const required of Object.values(TOKEN_ROUTES)) {
+      for (const scope of Array.isArray(required) ? required : [required]) {
+        expect(API_TOKEN_SCOPES).toContain(scope)
+      }
+    }
+  })
+})
+
+describe('satisfiesRequirement', () => {
+  test('a single required scope must be held', () => {
+    expect(satisfiesRequirement(['migrations:read'], 'migrations:read')).toBe(true)
+    expect(satisfiesRequirement(['migrations:read'], 'migrations:write')).toBe(false)
+  })
+
+  test('a list is any-of', () => {
+    expect(satisfiesRequirement(['audit:read'], ['migrations:read', 'audit:read'])).toBe(true)
+    expect(satisfiesRequirement(['audit:read'], ['migrations:read', 'queries:read'])).toBe(false)
+    expect(satisfiesRequirement([], ['migrations:read'])).toBe(false)
+  })
+})
+
+describe('effectiveScopes', () => {
+  test('migrations:read implies catalog:read — migration ids need the catalog to resolve', () => {
+    expect(effectiveScopes(['migrations:read']).sort()).toEqual(['catalog:read', 'migrations:read'])
+  })
+
+  test('queries:read and audit:read are never implied', () => {
+    const expanded = effectiveScopes(['migrations:read', 'migrations:write'])
+    expect(expanded).not.toContain('queries:read')
+    expect(expanded).not.toContain('audit:read')
+  })
+
+  test('migrations:write alone implies nothing', () => {
+    expect(effectiveScopes(['migrations:write'])).toEqual(['migrations:write'])
+  })
+
+  test('is idempotent and preserves explicit grants', () => {
+    const once = effectiveScopes(['migrations:read', 'audit:read'])
+    expect(effectiveScopes(once).sort()).toEqual(once.sort())
+    expect(once).toContain('audit:read')
+  })
+
+  test('no scope expansion ever yields migrations:write', () => {
+    for (const scope of API_TOKEN_SCOPES) {
+      if (scope === 'migrations:write') continue
+      expect(effectiveScopes([scope])).not.toContain('migrations:write')
+    }
   })
 })
 

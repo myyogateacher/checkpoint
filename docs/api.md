@@ -3,7 +3,12 @@
 Programmatic access to Checkpoint using personal access tokens — create and
 read migrations from CI pipelines, scripts, or tools. Everything a token does
 still flows through Checkpoint's normal review/approval process; approving and
-applying migrations is deliberately **not** available via the API.
+applying migrations is deliberately **not** available via the API, nor over
+MCP.
+
+> Looking to connect an AI agent instead? Checkpoint also exposes an MCP server
+> at `POST /api/mcp`, using these same tokens and scopes — see
+> [`docs/mcp.md`](mcp.md).
 
 ## Authentication
 
@@ -17,9 +22,18 @@ Authorization: Bearer chk_<your-token>
 
 A token acts as the user who created it: role, organization membership, and
 project governance checks apply exactly as they do in the UI. A viewer's token
-cannot create migrations, and no token can approve or apply one. (One nuance,
-identical to the UI: a project configured to require **0 approvals**
-auto-approves a migration on submit — governance, not the token, grants that.)
+cannot create migrations, and **no token can approve or apply one** — that holds
+whatever scopes the token has and whatever role its owner has. It is enforced
+three times over: the route allowlist below, a refusal at the point of action
+for any token principal, and the absence of any MCP tool for those verbs.
+
+This extends to the one path that used to be an exception. A project can be
+configured to require **0 approvals**, which makes a submit approve the
+migration outright. A token cannot take that path: `POST /api/migrations` with
+`submit: true` against such a project is rejected with `403`, and you are
+directed to submit from the UI. Create the migration as a draft
+(`submit: false`) and submit it there. Session users in the browser are
+unaffected.
 
 Tokens are prefixed `chk_` so secret scanners (gitleaks, trufflehog, GitHub
 secret scanning custom patterns) can match them: `chk_[A-Za-z0-9_-]{43}`.
@@ -31,8 +45,15 @@ Chosen at creation; a token only ever holds the scopes you give it.
 
 | Scope | Grants |
 | --- | --- |
-| `migrations:read` | List migrations and fetch a migration's detail |
+| `migrations:read` | List migrations and fetch a migration's detail (also implies `catalog:read`) |
 | `migrations:write` | Create a migration (optionally submitting it for review) |
+| `catalog:read` | Read projects, environments, databases and schemas (MCP only) |
+| `queries:read` | List and run saved queries (MCP only) |
+| `audit:read` | Read the audit log (MCP only) |
+
+The last three scopes have no REST endpoints today — they exist to scope MCP
+tools ([`docs/mcp.md`](mcp.md)). `queries:read` and `audit:read` are never
+implied by another scope.
 
 Requests to any endpoint outside the tables below — or without the required
 scope — are rejected with `403`. Token management (`/api/tokens`) is
@@ -82,7 +103,7 @@ Content-Type: application/json
 | `title` | string | required |
 | `description` | string \| null | optional |
 | `queries` | string[] | required — ordered SQL statements, one per entry |
-| `submit` | boolean | `false` → draft; `true` → submitted for approval (auto-approved if the project requires 0 approvals) |
+| `submit` | boolean | `false` → draft; `true` → submitted for approval. Rejected with `403` if the project requires 0 approvals (that would auto-approve — see Authentication above) |
 | `deploy_gated` | boolean | optional — mark as a deployment migration (applied only by an admin/deployer) |
 | `reviewers` | string[] | optional — reviewer emails, tagged in the submit notification |
 
@@ -144,6 +165,8 @@ notified, an admin approves, and a releaser applies it. Poll
   audit-trail row but never authenticate again.
 - **Auditing** — token creation, revocation, and every token-authenticated
   migration create is recorded in the audit log, labeled with the token name.
+  MCP-originated writes are labeled `via MCP (API token "…")` so agent traffic
+  is distinguishable from CI.
 - **Last used** — shown on the API Tokens page to help spot stale tokens.
 
 ## Versioning & compatibility

@@ -37,21 +37,32 @@ const toSq = (r: SqRow) => ({
   created_at: iso(r.created_at)!,
 })
 
+// Saved queries across the user's organizations.
+export async function listSavedQueries(userId: string): Promise<SqRow[]> {
+  const orgs = await userOrgIds(userId)
+  if (orgs.length === 0) return []
+  return query<SqRow>(`${SQ_SELECT} WHERE sq.org_id IN (${orgs.map(() => '?').join(',')}) ORDER BY sq.created_at DESC`, orgs)
+}
+
+// One saved query, membership-checked.
+export async function loadSavedQuery(userId: string, id: string): Promise<SqRow> {
+  const row = await queryOne<SqRow>(`${SQ_SELECT} WHERE sq.id = :id`, { id })
+  if (!row) throw notFound('Saved query not found')
+  await assertOrgMember(userId, row.org_id)
+  return row
+}
+
+export { toSq }
+
 export function registerSavedQueries(router: Router) {
   router.get('/api/saved-queries', async (ctx: Ctx) => {
     const user = requireUser(ctx)
-    const orgs = await userOrgIds(user.id)
-    if (orgs.length === 0) return json([])
-    const rows = await query<SqRow>(`${SQ_SELECT} WHERE sq.org_id IN (${orgs.map(() => '?').join(',')}) ORDER BY sq.created_at DESC`, orgs)
-    return json(rows.map(toSq))
+    return json((await listSavedQueries(user.id)).map(toSq))
   })
 
   router.get('/api/saved-queries/:id', async (ctx: Ctx) => {
     const user = requireUser(ctx)
-    const row = await queryOne<SqRow>(`${SQ_SELECT} WHERE sq.id = :id`, { id: ctx.params.id })
-    if (!row) throw notFound('Saved query not found')
-    await assertOrgMember(user.id, row.org_id)
-    return json(toSq(row))
+    return json(toSq(await loadSavedQuery(user.id, ctx.params.id)))
   })
 
   router.post('/api/saved-queries', async (ctx: Ctx) => {

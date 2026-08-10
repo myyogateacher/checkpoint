@@ -6,12 +6,14 @@ import { initDb } from './db/init'
 import { startScheduler } from './lib/scheduler'
 import { Router, HttpError, json, type Ctx } from './lib/http'
 import { getSessionUser } from './lib/session'
+import { resolveCorsOrigin } from './lib/cors'
 import {
   TOKEN_ROUTES,
   rateLimitAllows,
   readBearerToken,
   recordRateLimitFailure,
   resolveApiToken,
+  satisfiesRequirement,
   touchApiToken,
   type RateWindow,
 } from './lib/apiTokens'
@@ -30,6 +32,7 @@ import { registerValidationRules } from './modules/validationRules'
 import { registerUsers } from './modules/users'
 import { registerAudit } from './modules/audit'
 import { registerApiTokens } from './modules/apiTokens'
+import { registerMcp } from './modules/mcp'
 
 const router = new Router()
 registerAuth(router)
@@ -47,33 +50,19 @@ registerValidationRules(router)
 registerUsers(router)
 registerAudit(router)
 registerApiTokens(router)
+registerMcp(router)
 
 const distDir = `${import.meta.dir}/../dist`
-
-// Decide which Origin (if any) may make credentialed cross-origin calls.
-function resolveCorsOrigin(req: Request): string | null {
-  const origin = req.headers.get('origin')
-  if (!origin) return null
-  const normalized = origin.replace(/\/$/, '')
-  if (env.corsOrigins.length > 0) {
-    return env.corsOrigins.includes(normalized) ? origin : null
-  }
-  // Dev default: allow any localhost / 127.0.0.1 origin (any port or scheme).
-  if (!env.isProd) {
-    try {
-      const host = new URL(origin).hostname
-      if (host === 'localhost' || host === '127.0.0.1') return origin
-    } catch {}
-  }
-  return null
-}
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    // The mcp-* / last-event-id headers are what a browser-based MCP client sends.
+    'Access-Control-Allow-Headers':
+      'Content-Type, Authorization, mcp-session-id, mcp-protocol-version, last-event-id',
+    'Access-Control-Expose-Headers': 'mcp-session-id',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   }
@@ -104,8 +93,9 @@ async function authenticateBearer(
     recordRateLimitFailure(bearerFailures, clientIp, Date.now())
     return json({ error: 'Invalid, expired, or revoked API token.' }, { status: 401 })
   }
-  if (!resolved.token.scopes.includes(requiredScope)) {
-    return json({ error: `This token lacks the ${requiredScope} scope.` }, { status: 403 })
+  if (!satisfiesRequirement(resolved.token.scopes, requiredScope)) {
+    const needed = Array.isArray(requiredScope) ? requiredScope.join(' or ') : requiredScope
+    return json({ error: `This token lacks the ${needed} scope.` }, { status: 403 })
   }
   // last_used_at is display-only bookkeeping — never block or fail the request on it.
   void touchApiToken(resolved.token.id).catch((err) => console.error('token touch failed:', err))

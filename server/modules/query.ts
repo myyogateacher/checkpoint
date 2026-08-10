@@ -10,7 +10,7 @@ const DEFAULT_TIMEOUT_SECONDS = 30
 
 // The read-panel statement timeout is governed by the org's Settings › Query
 // (default_timeout_seconds); resolved server-side so it applies to every query.
-async function resolveTimeoutMs(orgId: string): Promise<number> {
+export async function resolveTimeoutMs(orgId: string): Promise<number> {
   const row = await queryOne<{ query: unknown }>('SELECT query FROM app_settings WHERE org_id = :org', { org: orgId })
   const secs = asJson<{ default_timeout_seconds?: number }>(row?.query, {}).default_timeout_seconds
   return Math.min(300, Math.max(1, Number(secs) || DEFAULT_TIMEOUT_SECONDS)) * 1000

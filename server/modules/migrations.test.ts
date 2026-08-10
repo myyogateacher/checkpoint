@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { canRelease, canSelfApprove } from './migrations'
-import type { SessionUser, UserRole } from '../types'
+import {
+  GOVERNANCE_ACTIONS,
+  assertNotTokenPrincipal,
+  canRelease,
+  canSelfApprove,
+  isGovernanceAction,
+} from './migrations'
+import { HttpError, type Ctx } from '../lib/http'
+import type { ApiTokenScope, SessionUser, UserRole } from '../types'
 
 const user = (role: UserRole, email = `${role}@myt.com`): SessionUser =>
   ({ id: `u_${role}`, email, name: role, picture: null, role })
@@ -59,5 +66,104 @@ describe('canSelfApprove', () => {
 
   test('an empty list denies everyone', () => {
     expect(canSelfApprove([], 'admin@myt.com')).toBe(false)
+  })
+})
+
+// The product invariant: a token principal (REST or MCP) can never approve,
+// reject, apply, schedule or cancel a schedule, whatever its scopes or the
+// owner's role. Enforced at the point of action, behind the route allowlist.
+describe('assertNotTokenPrincipal', () => {
+  const ctx = (apiToken?: Ctx['apiToken']): Ctx =>
+    ({
+      req: new Request('http://x/api/migrations/m_1/approve', { method: 'POST' }),
+      url: new URL('http://x/api/migrations/m_1/approve'),
+      params: { id: 'm_1' },
+      query: new URLSearchParams(),
+      user: user('admin'),
+      apiToken,
+    })
+
+  const token = (scopes: ApiTokenScope[]): Ctx['apiToken'] => ({ id: 't_1', name: 'ci', scopes })
+
+  test('every governance verb is refused for a token principal', () => {
+    for (const action of GOVERNANCE_ACTIONS) {
+      expect(() => assertNotTokenPrincipal(ctx(token(['migrations:write'])), action)).toThrow()
+    }
+  })
+
+  test('refused even for an admin owner holding every scope', () => {
+    const all = token(['migrations:read', 'migrations:write', 'catalog:read', 'queries:read', 'audit:read'])
+    for (const action of GOVERNANCE_ACTIONS) {
+      expect(() => assertNotTokenPrincipal(ctx(all), action)).toThrow()
+    }
+  })
+
+  // Grammar matters here: this string is what an agent reports back to a human.
+  const refusalFor = (action: string): HttpError => {
+    try {
+      assertNotTokenPrincipal(ctx(token(['migrations:write'])), action)
+    } catch (err) {
+      return err as HttpError
+    }
+    throw new Error(`assertNotTokenPrincipal did not throw for "${action}"`)
+  }
+
+  test('the refusal is a 403 that points the caller at the UI', () => {
+    const err = refusalFor('approve')
+    expect(err).toBeInstanceOf(HttpError)
+    expect(err.status).toBe(403)
+    expect(err.message).toBe(
+      'Migrations cannot be approved with an API token or over MCP. ' +
+        'Sign in to Checkpoint and act on the migration there.',
+    )
+  })
+
+  test('every verb renders as correct English', () => {
+    expect(refusalFor('reject').message).toBe(
+      'Migrations cannot be rejected with an API token or over MCP. ' +
+        'Sign in to Checkpoint and act on the migration there.',
+    )
+    expect(refusalFor('submit').message).toMatch(/^Migrations cannot be submitted with an API token/)
+    expect(refusalFor('apply').message).toMatch(/^Migrations cannot be applied with an API token/)
+    expect(refusalFor('schedule').message).toMatch(/^Migrations cannot be scheduled with an API token/)
+    expect(refusalFor('cancel-schedule').message).toMatch(/^Migration schedules cannot be cancelled with an API token/)
+    expect(refusalFor('reviewers').message).toMatch(/^Migration reviewers cannot be changed with an API token/)
+  })
+
+  test('no refusal message is malformed by naive verb suffixing', () => {
+    for (const action of GOVERNANCE_ACTIONS) {
+      // "rejectd", "cancel-scheduled", "reviewersd" and friends.
+      expect(refusalFor(action).message).not.toMatch(/\b\w*[^e]d\b(?= with an API token)/)
+      expect(refusalFor(action).message).not.toContain('cancel-schedule')
+    }
+  })
+
+  test('a session principal (no token) passes through', () => {
+    for (const action of GOVERNANCE_ACTIONS) {
+      expect(() => assertNotTokenPrincipal(ctx(undefined), action)).not.toThrow()
+    }
+  })
+
+  // Creating a migration (even one that arrives already submitted) and commenting
+  // stay open to tokens — they start review rather than short-circuiting it.
+  test('non-governance actions are not blocked for tokens (create/comment)', () => {
+    for (const action of ['create', 'comment']) {
+      expect(() => assertNotTokenPrincipal(ctx(token(['migrations:write'])), action)).not.toThrow()
+    }
+  })
+
+  test('isGovernanceAction recognizes exactly the governance verbs', () => {
+    expect(GOVERNANCE_ACTIONS.every(isGovernanceAction)).toBe(true)
+    for (const other of ['create', 'comment', 'comments', 'schedules', '']) {
+      expect(isGovernanceAction(other)).toBe(false)
+    }
+  })
+
+  // Guards the docs claim (docs/mcp.md): layer 3 covers every review-flow verb,
+  // so this list must stay in step with the routes under /api/migrations/:id/.
+  test('covers every lifecycle, release and reviewer verb', () => {
+    for (const verb of ['submit', 'approve', 'reject', 'apply', 'schedule', 'cancel-schedule', 'reviewers']) {
+      expect(isGovernanceAction(verb)).toBe(true)
+    }
   })
 })

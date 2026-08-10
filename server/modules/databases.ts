@@ -28,19 +28,25 @@ async function upsertConnection(databaseId: string, mode: 'read' | 'write', c: C
   )
 }
 
+// Databases visible to the user, optionally scoped to a project and/or org.
+export async function listDatabases(
+  userId: string,
+  filters: { project?: string | null; org?: string | null } = {},
+): Promise<DbRow[]> {
+  const orgs = await userOrgIds(userId)
+  if (orgs.length === 0) return []
+  const where: string[] = [`p.org_id IN (${orgs.map(() => '?').join(',')})`]
+  const params: unknown[] = [...orgs]
+  if (filters.project) { where.push('d.project_id = ?'); params.push(filters.project) }
+  if (filters.org) { await assertOrgMember(userId, filters.org); where.push('p.org_id = ?'); params.push(filters.org) }
+  return query<DbRow>(`${DB_SELECT} WHERE ${where.join(' AND ')} ORDER BY d.created_at`, params)
+}
+
 export function registerDatabases(router: Router) {
   // List databases, optionally scoped to a project and/or org.
   router.get('/api/databases', async (ctx: Ctx) => {
     const user = requireUser(ctx)
-    const project = ctx.query.get('project')
-    const org = ctx.query.get('org')
-    const orgs = await userOrgIds(user.id)
-    if (orgs.length === 0) return json([])
-    const where: string[] = [`p.org_id IN (${orgs.map(() => '?').join(',')})`]
-    const params: unknown[] = [...orgs]
-    if (project) { where.push('d.project_id = ?'); params.push(project) }
-    if (org) { await assertOrgMember(user.id, org); where.push('p.org_id = ?'); params.push(org) }
-    const rows = await query<DbRow>(`${DB_SELECT} WHERE ${where.join(' AND ')} ORDER BY d.created_at`, params)
+    const rows = await listDatabases(user.id, { project: ctx.query.get('project'), org: ctx.query.get('org') })
     return json(await Promise.all(rows.map(serializeDb)))
   })
 

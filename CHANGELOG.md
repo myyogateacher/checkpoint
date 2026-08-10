@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MCP server** (`POST /api/mcp`) — connect an AI agent to Checkpoint over
+  Streamable HTTP (stateless; no sessions or SSE), authenticated with the same
+  `chk_` personal access tokens. Twelve tools: read the catalog (projects,
+  environments, databases, schemas), read migrations (including the resolved
+  approvers/releasers/required_approvals, so an agent can report who must act),
+  list pending approvals, list and run saved queries, read the audit log, plus
+  exactly two mutating tools — create a migration and comment on one.
+  **No tool exists for approve, reject, apply, schedule, standalone submit,
+  set-reviewers, or arbitrary SQL**, and that is enforced in depth rather than
+  by omission (route allowlist + a point-of-action refusal for any token
+  principal). MCP writes are audit-logged as `via MCP (API token "…")`.
+  Claude Code and other static-token clients are supported; claude.ai remote
+  connectors (which require OAuth 2.1) are not. See `docs/mcp.md`.
+- **Three new token scopes** — `catalog:read`, `queries:read` and `audit:read`,
+  selectable on the API Tokens page, scoping the MCP read tools.
+  `migrations:read` implies `catalog:read` (migration ids need the catalog to
+  resolve, and the catalog holds no secrets); `queries:read` and `audit:read`
+  are never implied.
 - **API access via personal access tokens** — create and read migrations
   programmatically (`Authorization: Bearer chk_…`). Tokens are scoped
   (`migrations:read` / `migrations:write`), act as their owner under the same
@@ -28,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `*` sentinel already supported for releasers, so any org member may approve.
 
 ### Changed
+
+- **Tokens can no longer ride the 0-approval auto-approve path.** On a project
+  configured to require 0 approvals, `POST /api/migrations` with `submit: true`
+  used to land the migration directly in `approved`. Token-authenticated calls
+  now get `403` and are told to create a draft and submit from the UI, because
+  that path amounts to a token approving a migration. Browser sessions are
+  unaffected. This is the only behavioral change to the documented REST
+  contract; it narrows what a token can do, deliberately.
 
 - **Project settings**: `allow_self_approval` (boolean) is replaced by
   `self_approvers` (email list) on `GET`/`PUT /api/projects/:id/settings`.

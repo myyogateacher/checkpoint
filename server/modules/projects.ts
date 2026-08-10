@@ -16,7 +16,7 @@ interface ProjectRow {
   database_count: number
 }
 
-function toProject(r: ProjectRow) {
+export function toProject(r: ProjectRow) {
   return {
     id: r.id,
     org_id: r.org_id,
@@ -36,28 +36,40 @@ const PROJECT_SELECT = `
   FROM projects p`
 
 // Ensure the signed-in user can see this project, returning its row.
-async function loadProject(userId: string, id: string): Promise<ProjectRow> {
+export async function loadProject(userId: string, id: string): Promise<ProjectRow> {
   const row = await queryOne<ProjectRow>(`${PROJECT_SELECT} WHERE p.id = :id`, { id })
   if (!row) throw notFound('Project not found')
   await assertOrgMember(userId, row.org_id)
   return row
 }
 
+// Projects visible to the user, optionally narrowed to one org.
+export async function listProjects(userId: string, org?: string | null): Promise<ProjectRow[]> {
+  if (org) {
+    await assertOrgMember(userId, org)
+    return query<ProjectRow>(`${PROJECT_SELECT} WHERE p.org_id = :org ORDER BY p.created_at`, { org })
+  }
+  const orgs = await userOrgIds(userId)
+  if (orgs.length === 0) return []
+  return query<ProjectRow>(
+    `${PROJECT_SELECT} WHERE p.org_id IN (${orgs.map(() => '?').join(',')}) ORDER BY p.created_at`,
+    orgs,
+  )
+}
+
+// Environments belonging to a project the user may see.
+export async function listProjectEnvironments(userId: string, projectId: string) {
+  await loadProject(userId, projectId)
+  return query<{ id: string; project_id: string; name: string; color: string }>(
+    'SELECT id, project_id, name, color FROM environments WHERE project_id = :id ORDER BY created_at',
+    { id: projectId },
+  )
+}
+
 export function registerProjects(router: Router) {
   router.get('/api/projects', async (ctx: Ctx) => {
     const user = requireUser(ctx)
-    const org = ctx.query.get('org')
-    if (org) {
-      await assertOrgMember(user.id, org)
-      const rows = await query<ProjectRow>(`${PROJECT_SELECT} WHERE p.org_id = :org ORDER BY p.created_at`, { org })
-      return json(rows.map(toProject))
-    }
-    const orgs = await userOrgIds(user.id)
-    if (orgs.length === 0) return json([])
-    const rows = await query<ProjectRow>(
-      `${PROJECT_SELECT} WHERE p.org_id IN (${orgs.map(() => '?').join(',')}) ORDER BY p.created_at`,
-      orgs,
-    )
+    const rows = await listProjects(user.id, ctx.query.get('org'))
     return json(rows.map(toProject))
   })
 
@@ -84,11 +96,7 @@ export function registerProjects(router: Router) {
   // Environments for a project.
   router.get('/api/projects/:id/environments', async (ctx: Ctx) => {
     const user = requireUser(ctx)
-    await loadProject(user.id, ctx.params.id)
-    const rows = await query<{ id: string; project_id: string; name: string; color: string }>(
-      'SELECT id, project_id, name, color FROM environments WHERE project_id = :id ORDER BY created_at',
-      { id: ctx.params.id },
-    )
+    const rows = await listProjectEnvironments(user.id, ctx.params.id)
     const withCounts = await Promise.all(
       rows.map(async (e) => {
         const [{ n }] = await query<{ n: number }>('SELECT COUNT(*) AS n FROM `databases` WHERE environment_id = :id', { id: e.id })

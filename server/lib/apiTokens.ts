@@ -9,13 +9,48 @@ export const TOKEN_SECRET_PREFIX = 'chk_'
 // Shown in list views so a token can be identified without revealing it.
 export const TOKEN_DISPLAY_PREFIX_LENGTH = 12
 
-export const API_TOKEN_SCOPES: ApiTokenScope[] = ['migrations:read', 'migrations:write']
+export const API_TOKEN_SCOPES: ApiTokenScope[] = [
+  'migrations:read',
+  'migrations:write',
+  'catalog:read',
+  'queries:read',
+  'audit:read',
+]
 
-// Routes reachable with Bearer auth ("METHOD /registered-path" → required scope); everything else is session-only.
-export const TOKEN_ROUTES: Record<string, ApiTokenScope> = {
+// Every scope — the MCP endpoint admits a token holding any one of them, and then
+// enforces the per-tool scope itself (see server/modules/mcp.ts).
+const ANY_SCOPE: ApiTokenScope[] = [...API_TOKEN_SCOPES]
+
+// Routes reachable with Bearer auth ("METHOD /registered-path" → required scope);
+// everything else is session-only. A list means any-of: one matching scope suffices.
+export const TOKEN_ROUTES: Record<string, ApiTokenScope | ApiTokenScope[]> = {
   'GET /api/migrations': 'migrations:read',
   'GET /api/migrations/:id': 'migrations:read',
   'POST /api/migrations': 'migrations:write',
+  'POST /api/mcp': ANY_SCOPE,
+  // Registered only to answer with 405 + Allow: POST instead of a bare 404.
+  'GET /api/mcp': ANY_SCOPE,
+  'DELETE /api/mcp': ANY_SCOPE,
+}
+
+// True when `scopes` satisfies a TOKEN_ROUTES requirement (any-of for a list).
+export function satisfiesRequirement(
+  scopes: ApiTokenScope[],
+  required: ApiTokenScope | ApiTokenScope[],
+): boolean {
+  return Array.isArray(required) ? required.some((r) => scopes.includes(r)) : scopes.includes(required)
+}
+
+// Implied scopes. `migrations:read` also grants `catalog:read`, because migration
+// ids are meaningless without resolving the project/environment/database they
+// belong to, and the catalog exposes no secrets (connection passwords are
+// write-only and never serialized). `queries:read` and `audit:read` are never
+// implied — reading arbitrary table data or the org's audit trail is a distinct,
+// explicit grant.
+export function effectiveScopes(stored: ApiTokenScope[]): ApiTokenScope[] {
+  const out = new Set<ApiTokenScope>(stored)
+  if (out.has('migrations:read')) out.add('catalog:read')
+  return [...out]
 }
 
 export function generateApiToken(): { token: string; hash: string; prefix: string } {
@@ -157,7 +192,8 @@ export async function resolveApiToken(secret: string): Promise<ResolvedApiToken 
   if (validity !== 'ok') return null
   return {
     user: { id: row.user_id, email: row.email, name: row.user_name, picture: row.picture, role: row.role },
-    token: { id: row.id, name: row.name, scopes: asJson<ApiTokenScope[]>(row.scopes, []) },
+    // Expanded once here so REST route checks and MCP tool checks see the same set.
+    token: { id: row.id, name: row.name, scopes: effectiveScopes(asJson<ApiTokenScope[]>(row.scopes, [])) },
   }
 }
 

@@ -19,6 +19,7 @@
     "screenshots": "node scripts/screenshots.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "google-auth-library": "^10.9.0",
     "mysql2": "^3.22.5",
@@ -28,7 +29,8 @@
     "react-hot-toast": "^2.6.0",
     "react-icons": "^5.5.0",
     "react-router-dom": "^7.1.1",
-    "sql-formatter": "^15.8.2"
+    "sql-formatter": "^15.8.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.0",

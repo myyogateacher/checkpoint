@@ -9,8 +9,11 @@ import { Badge, Button, Card, EmptyState, Field, Modal, Spinner, TextInput } fro
 import { Dropdown } from '../components/Dropdown'
 
 const SCOPE_OPTIONS: Array<{ value: ApiTokenScope; label: string; hint: string }> = [
-  { value: 'migrations:read', label: 'Read migrations', hint: 'List migrations and fetch their details' },
+  { value: 'migrations:read', label: 'Read migrations', hint: 'List migrations and fetch their details (includes the catalog)' },
   { value: 'migrations:write', label: 'Create migrations', hint: 'Open (and optionally submit) migrations for review' },
+  { value: 'catalog:read', label: 'Read catalog', hint: 'List projects, environments, databases and their schemas' },
+  { value: 'queries:read', label: 'Run saved queries', hint: 'List saved queries and run them read-only' },
+  { value: 'audit:read', label: 'Read audit log', hint: 'Read the audit trail for your organizations' },
 ]
 
 const EXPIRY_OPTIONS: Array<{ value: string; label: string }> = [
@@ -141,7 +144,7 @@ export function ApiTokensPage() {
       <PageHeader
         eyebrow="Account"
         title="API Tokens"
-        description="Personal access tokens for programmatic access — create migrations from CI or tools. Tokens act as you and can never do more than your role allows."
+        description="Personal access tokens for programmatic access — the REST API from CI, or an AI agent over MCP. Tokens act as you and can never do more than your role allows."
         actions={<Button onClick={() => setCreateOpen(true)}>New token</Button>}
       />
 
@@ -152,7 +155,7 @@ export function ApiTokensPage() {
           <EmptyState
             icon={<FaKey />}
             title="No API tokens yet"
-            hint='Create a token to call the Checkpoint API — e.g. open migrations from a CI pipeline. See "API access" in the docs.'
+            hint='Create a token to call the Checkpoint API or connect an MCP client — e.g. open migrations from a CI pipeline. See "API access" in the docs.'
           />
         ) : (
           <ul className="divide-y divide-slate-200/50">
@@ -200,7 +203,9 @@ export function ApiTokensPage() {
               </label>
             ))}
           </div>
-          <p className="mt-2 text-xs text-slate-500">Approving and applying migrations is never available via token.</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Approving and applying migrations is never available via token or MCP.
+          </p>
         </div>
         <Field label="Expires">
           <Dropdown value={expiry} options={EXPIRY_OPTIONS} onChange={setExpiry} />

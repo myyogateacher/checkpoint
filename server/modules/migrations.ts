@@ -83,7 +83,7 @@ const MIG_SELECT = `
   LEFT JOIN project_settings ps ON ps.project_id = p.id
   LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id`
 
-async function fullMigration(row: MigRow) {
+export async function fullMigration(row: MigRow) {
   const queries = await query<{ id: string; ord: number; sql_text: string }>(
     'SELECT id, ord, sql_text FROM migration_queries WHERE migration_id = :id ORDER BY ord',
     { id: row.id },
@@ -127,7 +127,7 @@ async function fullMigration(row: MigRow) {
   }
 }
 
-async function loadMig(userId: string, id: string): Promise<MigRow> {
+export async function loadMig(userId: string, id: string): Promise<MigRow> {
   const row = await queryOne<MigRow>(`${MIG_SELECT} WHERE m.id = :id`, { id })
   if (!row) throw notFound('Migration not found')
   await assertOrgMember(userId, row.org_id)
@@ -183,19 +183,174 @@ export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl
   await notifyMigration(mig.org_id, 'apply', mig.id, actorEmail, baseUrl)
 }
 
+// List migrations visible to the user, optionally filtered. Shared by
+// GET /api/migrations and the MCP list_migrations tool.
+export async function listMigrations(
+  userId: string,
+  filters: { database?: string | null; org?: string | null; status?: string | null } = {},
+): Promise<MigRow[]> {
+  const orgs = await userOrgIds(userId)
+  if (orgs.length === 0) return []
+  const where = [`p.org_id IN (${orgs.map(() => '?').join(',')})`]
+  const params: unknown[] = [...orgs]
+  if (filters.database) { where.push('m.database_id = ?'); params.push(filters.database) }
+  if (filters.org) { await assertOrgMember(userId, filters.org); where.push('p.org_id = ?'); params.push(filters.org) }
+  if (filters.status) { where.push('m.status = ?'); params.push(filters.status) }
+  return query<MigRow>(`${MIG_SELECT} WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC`, params)
+}
+
+export interface CreateMigrationInput {
+  database_id: string
+  title: string
+  description?: string | null
+  queries: string[]
+  submit?: boolean
+  deploy_gated?: boolean
+  reviewers?: string[]
+}
+
+// Open a migration (optionally submitting it). Shared by POST /api/migrations and
+// the MCP create_migration tool.
+//
+// `via` is appended to the audit summary to attribute the call (API token, MCP).
+// `refuseAutoApprove` is set by non-interactive principals: when the project
+// requires 0 approvals a submit would land straight in `approved` without any
+// human in the loop, so those callers must submit from the UI instead.
+export async function createMigration(
+  user: SessionUser,
+  input: CreateMigrationInput,
+  opts: { baseUrl: string; via?: string; refuseAutoApprove?: boolean },
+) {
+  if (!input.database_id || !input.title?.trim() || !input.queries?.length) {
+    throw badRequest('database_id, title and queries are required.')
+  }
+  const db = await queryOne<{ org_id: string; name: string; engine: string; required_approvals: number | null }>(
+    `SELECT p.org_id, d.name, d.engine,
+            COALESCE(pes.required_approvals, ps.required_approvals) AS required_approvals
+       FROM \`databases\` d
+       JOIN projects p ON p.id = d.project_id
+       LEFT JOIN project_settings ps ON ps.project_id = p.id
+       LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id
+      WHERE d.id = :id`,
+    { id: input.database_id },
+  )
+  if (!db) throw badRequest('Unknown database.')
+  await assertOrgMember(user.id, db.org_id)
+
+  // Reject statements that don't parse for the target engine (engines without
+  // a grammar are skipped). The client runs the same check for inline feedback.
+  for (let i = 0; i < input.queries.length; i++) {
+    const syntaxError = checkSyntax(input.queries[i].trim(), db.engine)
+    if (syntaxError) throw badRequest(`Statement ${i + 1}: ${syntaxError}`)
+  }
+
+  // When the project requires 0 approvals, a submitted migration is approved
+  // immediately (ready to release) rather than waiting in pending_approval.
+  const required = requiredApprovals(db.required_approvals)
+  const autoApproved = !!input.submit && required === 0
+  if (autoApproved && opts.refuseAutoApprove) {
+    throw forbidden(
+      'This project requires 0 approvals, so submitting would approve the migration outright. ' +
+        'Create it as a draft (submit: false) and submit it from the Checkpoint UI.',
+    )
+  }
+  const id = newId('m')
+  const status: MigrationStatus = !input.submit ? 'draft' : autoApproved ? 'approved' : 'pending_approval'
+  await execute('INSERT INTO migrations (id, database_id, title, description, status, author_email, deploy_gated) VALUES (:id, :db, :title, :desc, :status, :author, :gated)', {
+    id, db: input.database_id, title: input.title.trim(), desc: input.description ?? null, status, author: user.email, gated: input.deploy_gated ? 1 : 0,
+  })
+  if (autoApproved) await execute('UPDATE migrations SET approved_at = NOW() WHERE id = :id', { id })
+  for (let i = 0; i < input.queries.length; i++) {
+    await execute('INSERT INTO migration_queries (id, migration_id, ord, sql_text) VALUES (:id, :m, :ord, :sql)', {
+      id: newId('q'), m: id, ord: i + 1, sql: input.queries[i],
+    })
+  }
+  // Reviewers picked at creation; tagged in the submit notification rather than
+  // sent a separate "reviewer added" alert.
+  for (const email of input.reviewers ?? []) {
+    if (!email?.trim()) continue
+    await execute('INSERT IGNORE INTO migration_reviewers (migration_id, reviewer_email) VALUES (:m, :e)', { m: id, e: email.trim() })
+  }
+  await addEvent(id, user.email, 'created', null)
+  if (input.submit) await addEvent(id, user.email, 'submitted', null)
+  if (autoApproved) await addEvent(id, user.email, 'approve', 'Auto-approved — project requires no approvals.')
+  const via = opts.via ?? ''
+  await writeAudit({ actor: user, orgId: db.org_id, action: input.submit ? 'migration.submit' : 'migration.create', entityType: 'migration', entityId: id, entityLabel: input.title.trim(), summary: `${input.submit ? 'Submitted' : 'Created'} migration on ${db.name}${via}` })
+  if (input.submit) await notifyMigration(db.org_id, 'submit', id, user.email, opts.baseUrl)
+  if (autoApproved) await notifyMigration(db.org_id, 'approve', id, user.email, opts.baseUrl)
+  return fullMigration(await loadMig(user.id, id))
+}
+
+// Append a comment to a migration. Shared by POST /api/migrations/:id/comments
+// and the MCP add_migration_comment tool. Comments are append-only.
+export async function addMigrationComment(user: SessionUser, migrationId: string, body: string) {
+  const mig = await loadMig(user.id, migrationId)
+  if (!body?.trim()) throw badRequest('Empty comment.')
+  await execute('INSERT INTO migration_comments (id, migration_id, author_email, author_name, body) VALUES (:id, :m, :e, :n, :b)', {
+    id: newId('cm'), m: mig.id, e: user.email, n: user.name, b: body.trim(),
+  })
+  return fullMigration(await loadMig(user.id, mig.id))
+}
+
+// Governance verbs — the review-flow actions on an existing migration: moving it
+// through the lifecycle, releasing it, or changing who reviews it. These are the
+// actions that let SQL reach a real database (or decide who vouches for it), and
+// they are deliberately reachable only by a human in a browser session.
+//
+// `submit` is included: on a project requiring 0 approvals a submit flips the
+// migration straight to approved, and even where it doesn't, advancing someone
+// else's migration into review is a human call. Note this is the *standalone*
+// submit of an existing migration — creating a migration already submitted
+// (POST /api/migrations, MCP create_migration) is a separate, permitted action.
+export const GOVERNANCE_ACTIONS = [
+  'submit',
+  'approve',
+  'reject',
+  'apply',
+  'schedule',
+  'cancel-schedule',
+  'reviewers',
+] as const
+export type GovernanceAction = (typeof GOVERNANCE_ACTIONS)[number]
+
+// How each refusal reads. An exhaustive Record, so adding a governance action
+// without giving it a message is a type error.
+const GOVERNANCE_REFUSAL: Record<GovernanceAction, string> = {
+  submit: 'Migrations cannot be submitted',
+  approve: 'Migrations cannot be approved',
+  reject: 'Migrations cannot be rejected',
+  apply: 'Migrations cannot be applied',
+  schedule: 'Migrations cannot be scheduled',
+  'cancel-schedule': 'Migration schedules cannot be cancelled',
+  reviewers: 'Migration reviewers cannot be changed',
+}
+
+export function isGovernanceAction(action: string): action is GovernanceAction {
+  return (GOVERNANCE_ACTIONS as readonly string[]).includes(action)
+}
+
+// INVARIANT: no API-token principal may ever perform a governance verb — not over
+// REST, not over MCP, no scope and no role grants it. The Bearer allowlist
+// (TOKEN_ROUTES) already keeps these routes session-only and the MCP module
+// registers no tools for them; this is the last line of defense, enforced at the
+// point of action so a future routing or tool mistake still cannot approve or
+// apply a migration. Do not weaken it without changing the product decision.
+export function assertNotTokenPrincipal(ctx: Ctx, action: string): void {
+  if (!ctx.apiToken || !isGovernanceAction(action)) return
+  throw forbidden(
+    `${GOVERNANCE_REFUSAL[action]} with an API token or over MCP. ` +
+      'Sign in to Checkpoint and act on the migration there.',
+  )
+}
+
 export function registerMigrations(router: Router) {
   // List (optionally by database or org), scoped to the user's orgs.
   router.get('/api/migrations', async (ctx: Ctx) => {
     const user = requireUser(ctx)
-    const orgs = await userOrgIds(user.id)
-    if (orgs.length === 0) return json([])
-    const where = [`p.org_id IN (${orgs.map(() => '?').join(',')})`]
-    const params: unknown[] = [...orgs]
-    const database = ctx.query.get('database')
-    const org = ctx.query.get('org')
-    if (database) { where.push('m.database_id = ?'); params.push(database) }
-    if (org) { await assertOrgMember(user.id, org); where.push('p.org_id = ?'); params.push(org) }
-    const rows = await query<MigRow>(`${MIG_SELECT} WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC`, params)
+    const rows = await listMigrations(user.id, {
+      database: ctx.query.get('database'),
+      org: ctx.query.get('org'),
+    })
     return json(await Promise.all(rows.map(fullMigration)))
   })
 
@@ -206,68 +361,32 @@ export function registerMigrations(router: Router) {
 
   router.post('/api/migrations', async (ctx: Ctx) => {
     const user = requireCapability(ctx, 'edit')
-    const body = await readJson<{ database_id: string; title: string; description: string | null; queries: string[]; submit: boolean; deploy_gated?: boolean; reviewers?: string[] }>(ctx.req)
-    if (!body.database_id || !body.title?.trim() || !body.queries?.length) throw badRequest('database_id, title and queries are required.')
-    const db = await queryOne<{ org_id: string; name: string; engine: string; required_approvals: number | null }>(
-      `SELECT p.org_id, d.name, d.engine,
-              COALESCE(pes.required_approvals, ps.required_approvals) AS required_approvals
-         FROM \`databases\` d
-         JOIN projects p ON p.id = d.project_id
-         LEFT JOIN project_settings ps ON ps.project_id = p.id
-         LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id
-        WHERE d.id = :id`,
-      { id: body.database_id },
-    )
-    if (!db) throw badRequest('Unknown database.')
-    await assertOrgMember(user.id, db.org_id)
-
-    // Reject statements that don't parse for the target engine (engines without
-    // a grammar are skipped). The client runs the same check for inline feedback.
-    for (let i = 0; i < body.queries.length; i++) {
-      const syntaxError = checkSyntax(body.queries[i].trim(), db.engine)
-      if (syntaxError) throw badRequest(`Statement ${i + 1}: ${syntaxError}`)
-    }
-
-    // When the project requires 0 approvals, a submitted migration is approved
-    // immediately (ready to release) rather than waiting in pending_approval.
-    const required = requiredApprovals(db.required_approvals)
-    const autoApproved = body.submit && required === 0
-    const id = newId('m')
-    const status: MigrationStatus = !body.submit ? 'draft' : autoApproved ? 'approved' : 'pending_approval'
-    await execute('INSERT INTO migrations (id, database_id, title, description, status, author_email, deploy_gated) VALUES (:id, :db, :title, :desc, :status, :author, :gated)', {
-      id, db: body.database_id, title: body.title.trim(), desc: body.description ?? null, status, author: user.email, gated: body.deploy_gated ? 1 : 0,
-    })
-    if (autoApproved) await execute('UPDATE migrations SET approved_at = NOW() WHERE id = :id', { id })
-    for (let i = 0; i < body.queries.length; i++) {
-      await execute('INSERT INTO migration_queries (id, migration_id, ord, sql_text) VALUES (:id, :m, :ord, :sql)', {
-        id: newId('q'), m: id, ord: i + 1, sql: body.queries[i],
-      })
-    }
-    // Reviewers picked at creation; tagged in the submit notification rather than
-    // sent a separate "reviewer added" alert.
-    for (const email of body.reviewers ?? []) {
-      if (!email?.trim()) continue
-      await execute('INSERT IGNORE INTO migration_reviewers (migration_id, reviewer_email) VALUES (:m, :e)', { m: id, e: email.trim() })
-    }
-    await addEvent(id, user.email, 'created', null)
-    if (body.submit) await addEvent(id, user.email, 'submitted', null)
-    if (autoApproved) await addEvent(id, user.email, 'approve', 'Auto-approved — project requires no approvals.')
-    // Token-authenticated creates are called out in the audit trail.
+    const body = await readJson<CreateMigrationInput>(ctx.req)
+    // Token-authenticated creates are called out in the audit trail. They also
+    // cannot ride the 0-approval auto-approve path: that would be a token
+    // approving a migration, which no token may ever do.
     const via = ctx.apiToken ? ` via API token "${ctx.apiToken.name}"` : ''
-    await writeAudit({ actor: user, orgId: db.org_id, action: body.submit ? 'migration.submit' : 'migration.create', entityType: 'migration', entityId: id, entityLabel: body.title.trim(), summary: `${body.submit ? 'Submitted' : 'Created'} migration on ${db.name}${via}` })
-    if (body.submit) await notifyMigration(db.org_id, 'submit', id, user.email, env.appBaseUrl || ctx.url.origin)
-    if (autoApproved) await notifyMigration(db.org_id, 'approve', id, user.email, env.appBaseUrl || ctx.url.origin)
-    return json(await fullMigration(await loadMig(user.id, id)))
+    return json(
+      await createMigration(user, body, {
+        baseUrl: env.appBaseUrl || ctx.url.origin,
+        via,
+        refuseAutoApprove: !!ctx.apiToken,
+      }),
+    )
   })
 
   // Lifecycle transitions.
   for (const action of ['submit', 'approve', 'reject', 'apply'] as const) {
     router.post(`/api/migrations/:id/${action}`, async (ctx: Ctx) => {
+      assertNotTokenPrincipal(ctx, action)
       const user = requireUser(ctx)
       const mig = await loadMig(user.id, ctx.params.id)
       // Authorization: submit → editor; approve/reject → admin or a designated
       // approver; apply → admin or a designated releaser (both from project settings).
       if (action === 'submit') {
+        // Token principals never get here — assertNotTokenPrincipal above covers
+        // submit, which matters most on a 0-approval project where a submit
+        // approves the migration outright.
         if (!can(user.role, 'edit')) throw forbidden('Your role does not permit this action.')
       } else if (action === 'apply') {
         if (!canRelease(!!mig.deploy_gated, asJson<string[]>(mig.releasers, []), user)) {
@@ -354,6 +473,7 @@ export function registerMigrations(router: Router) {
   // Schedule an approved migration to auto-apply at a future datetime. Same
   // authority as apply (admin or a designated releaser).
   router.post('/api/migrations/:id/schedule', async (ctx: Ctx) => {
+    assertNotTokenPrincipal(ctx, 'schedule')
     const user = requireUser(ctx)
     const mig = await loadMig(user.id, ctx.params.id)
     if (!canRelease(!!mig.deploy_gated, asJson<string[]>(mig.releasers, []), user)) {
@@ -372,6 +492,7 @@ export function registerMigrations(router: Router) {
 
   // Cancel a pending schedule (leaves the migration approved).
   router.post('/api/migrations/:id/cancel-schedule', async (ctx: Ctx) => {
+    assertNotTokenPrincipal(ctx, 'cancel-schedule')
     const user = requireUser(ctx)
     const mig = await loadMig(user.id, ctx.params.id)
     if (!canRelease(!!mig.deploy_gated, asJson<string[]>(mig.releasers, []), user)) {
@@ -385,6 +506,9 @@ export function registerMigrations(router: Router) {
 
   // Reviewers (replace the set).
   router.put('/api/migrations/:id/reviewers', async (ctx: Ctx) => {
+    // Who vouches for a change is a human call about accountability, so this is a
+    // governance verb: no token principal may reassign reviewers.
+    assertNotTokenPrincipal(ctx, 'reviewers')
     const user = requireCapability(ctx, 'edit')
     const mig = await loadMig(user.id, ctx.params.id)
     const { reviewers } = await readJson<{ reviewers: string[] }>(ctx.req)
@@ -401,13 +525,8 @@ export function registerMigrations(router: Router) {
   // Comments (append).
   router.post('/api/migrations/:id/comments', async (ctx: Ctx) => {
     const user = requireCapability(ctx, 'edit')
-    const mig = await loadMig(user.id, ctx.params.id)
     const { body } = await readJson<{ body: string }>(ctx.req)
-    if (!body?.trim()) throw badRequest('Empty comment.')
-    await execute('INSERT INTO migration_comments (id, migration_id, author_email, author_name, body) VALUES (:id, :m, :e, :n, :b)', {
-      id: newId('cm'), m: mig.id, e: user.email, n: user.name, b: body.trim(),
-    })
-    return json(await fullMigration(await loadMig(user.id, mig.id)))
+    return json(await addMigrationComment(user, ctx.params.id, body))
   })
 }
 
