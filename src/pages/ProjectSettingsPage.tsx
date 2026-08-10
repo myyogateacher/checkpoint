@@ -7,26 +7,8 @@ import { can } from '../lib/format'
 import { notify } from '../lib/toast'
 import { Button, Card, Field, Spinner } from '../components/ui'
 import { Dropdown } from '../components/Dropdown'
-import { UserMultiSelect } from '../components/UserMultiSelect'
+import { ALL_USERS, UserMultiSelect } from '../components/UserMultiSelect'
 import { useProject } from './ProjectLayout'
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition ${
-        checked ? 'bg-gradient-to-r from-blue-600 to-indigo-600' : 'bg-slate-300 dark:bg-slate-600'
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? 'left-4' : 'left-0.5'}`}
-      />
-    </button>
-  )
-}
 
 // Scope for the governance rules being viewed/edited: the project-wide defaults,
 // or one environment's override of them.
@@ -103,8 +85,13 @@ export function ProjectSettingsPage() {
   }
 
   // Required approvals can't exceed the number of approvers; 0 means no approval
-  // is required before release.
-  const maxRequired = settings.approvers.length
+  // is required before release. With "All Users" the pool is every org member —
+  // floored at the saved value so the current option still exists while the user
+  // list is still loading (it arrives from a separate request than the settings).
+  const allApprovers = settings.approvers.includes(ALL_USERS)
+  const maxRequired = allApprovers
+    ? Math.max(users.length, settings.required_approvals)
+    : settings.approvers.length
   const approvalOptions = Array.from({ length: maxRequired + 1 }, (_, i) => ({
     value: String(i),
     label: String(i),
@@ -169,10 +156,14 @@ export function ProjectSettingsPage() {
           selected={settings.approvers}
           editable={editable}
           placeholder="Add approver…"
+          allLabel="All Users"
           onChange={(approvers) =>
-            setSettings((s) =>
-              s ? { ...s, approvers, required_approvals: Math.min(s.required_approvals, approvers.length) } : s,
-            )
+            setSettings((s) => {
+              if (!s) return s
+              // "All Users" makes the pool everyone, so there is nothing to clamp to.
+              if (approvers.includes(ALL_USERS)) return { ...s, approvers }
+              return { ...s, approvers, required_approvals: Math.min(s.required_approvals, approvers.length) }
+            })
           }
         />
       </Card>
@@ -202,7 +193,7 @@ export function ProjectSettingsPage() {
         </div>
         <Field
           label="Approvals required before release"
-          hint={`Between 0 and ${maxRequired} (the number of approvers). 0 means no approval is required before release.`}
+          hint={`Between 0 and ${maxRequired} (the number of ${allApprovers ? 'org members' : 'approvers'}). 0 means no approval is required before release.`}
         >
           {editable ? (
             <Dropdown
@@ -222,20 +213,18 @@ export function ProjectSettingsPage() {
           <FaUserShield className="text-amber-500" />
           <h2 className="text-sm font-semibold text-slate-800">Self-approval</h2>
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
-            Allow the user who created a migration to approve it themselves. When off, an author's migration
-            must be approved by someone else.
-          </p>
-          {editable ? (
-            <Toggle
-              checked={settings.allow_self_approval}
-              onChange={(allow_self_approval) => setSettings((s) => (s ? { ...s, allow_self_approval } : s))}
-            />
-          ) : (
-            <p className="text-sm font-medium text-slate-800">{settings.allow_self_approval ? 'On' : 'Off'}</p>
-          )}
-        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Users who may approve their own migrations. Anyone not listed needs a migration of theirs approved by
+          someone else. Pick “All Users” to allow it for everyone.
+        </p>
+        <UserMultiSelect
+          users={users}
+          selected={settings.self_approvers}
+          editable={editable}
+          placeholder="Grant self-approval…"
+          allLabel="All Users"
+          onChange={(self_approvers) => setSettings((s) => (s ? { ...s, self_approvers } : s))}
+        />
       </Card>
     </div>
   )

@@ -90,4 +90,30 @@ export const MIGRATIONS: Migration[] = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     ],
   },
+  {
+    version: 6,
+    name: 'project_settings_self_approvers',
+    statements: [
+      // Self-approval is now a user list instead of a boolean: authors listed here
+      // may approve their own migrations, with '*' meaning everyone. Nullable so an
+      // env override can leave it NULL and inherit the project list via COALESCE.
+      `ALTER TABLE project_settings ADD COLUMN self_approvers JSON DEFAULT NULL`,
+      `ALTER TABLE project_env_settings ADD COLUMN self_approvers JSON DEFAULT NULL`,
+    ],
+  },
+  {
+    version: 7,
+    name: 'project_settings_self_approvers_backfill',
+    statements: [
+      // Carry the old blanket flag over: on → the "everyone" sentinel, off → an
+      // explicit empty list. Unconditional (no WHERE) because every existing row
+      // held a real boolean, and leaving an env override NULL would make it
+      // silently inherit the project list — re-enabling self-approval on an
+      // environment where it was deliberately off. DML is split from the v6 DDL:
+      // MySQL auto-commits DDL, so a failure here must not re-run those ALTERs.
+      // allow_self_approval stays (append-only) but is no longer read.
+      `UPDATE project_settings SET self_approvers = IF(allow_self_approval = 1, JSON_ARRAY('*'), JSON_ARRAY())`,
+      `UPDATE project_env_settings SET self_approvers = IF(allow_self_approval = 1, JSON_ARRAY('*'), JSON_ARRAY())`,
+    ],
+  },
 ]

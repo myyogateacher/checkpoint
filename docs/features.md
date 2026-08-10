@@ -155,8 +155,18 @@ Single row (or key/value): email (SMTP) + Slack config (see §10).
 | GET | `/api/databases?project=:id` | any | list; `project` optional (all if absent) |
 | GET | `/api/databases/:id` | any | single (includes both connections, sans secrets) |
 | POST | `/api/databases` | edit | create — body `DatabaseInput` (project, env, name, engine, tags, read+write connection inputs incl. plaintext password to store encrypted) |
+| GET | `/api/projects/:id/settings` | any | `ProjectSettings`: `approvers`, `releasers`, `required_approvals`, `self_approvers` |
+| PUT | `/api/projects/:id/settings` | manage_users | upsert the same fields |
+| DELETE | `/api/projects/:id/settings` | manage_users | requires `?environment=`; drops the override |
 
 `Connection` returned to client carries `has_password: boolean`, never the secret.
+
+Governance is per environment: all three settings routes take an optional
+`?environment=:env_id` to read/write that environment's override, and a `GET`
+without an override returns the project defaults with `inherited: true`.
+`approvers`, `releasers` and `self_approvers` are email lists in which the `*`
+sentinel means "any org member" (`self_approvers` replaces the former
+`allow_self_approval` boolean; a project that had it on reads as `["*"]`).
 
 ---
 
@@ -209,8 +219,12 @@ draft ──submit──► pending_approval ──approve──► approved ─
 
 - A migration has **≥1 ordered SQL statement**.
 - `submit`: author/editor moves `draft → pending_approval`.
-- `approve` / `reject`: **admin** only; sets `approved_by`/`approved_at` or
-  `rejected`. `reject` carries a note shared with the author.
+- `approve` / `reject`: **admin** or a designated approver (incl. via the `*`
+  sentinel); sets `approved_by`/`approved_at` or `rejected`. `reject` carries a
+  note shared with the author.
+- **Self-approval**: the author may approve their own migration only when listed
+  in the project's `self_approvers` (or that list holds `*`); otherwise approve
+  is rejected with 400. The grant does not bypass the approver check above.
 - `apply`: **admin** only; allowed from `approved`. Runs all statements **in
   order** against the **write** connection, ideally transactionally where the
   engine supports it; sets `applied_at`. On failure → `failed` with the error

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { canRelease } from './migrations'
+import { canRelease, canSelfApprove } from './migrations'
 import type { SessionUser, UserRole } from '../types'
 
 const user = (role: UserRole, email = `${role}@myt.com`): SessionUser =>
@@ -39,5 +39,25 @@ describe('canRelease — standard migrations (unchanged behavior)', () => {
 
   test('listing is by exact email', () => {
     expect(canRelease(false, ['someone-else@myt.com'], user('editor'))).toBe(false)
+  })
+})
+
+describe('canSelfApprove', () => {
+  test('the ALL_USERS sentinel grants anyone', () => {
+    expect(canSelfApprove(['*'], 'anyone@myt.com')).toBe(true)
+    expect(canSelfApprove(['*', 'dba@myt.com'], 'anyone@myt.com')).toBe(true)
+  })
+
+  test('a listed email is granted', () => {
+    expect(canSelfApprove(['dba@myt.com'], 'dba@myt.com')).toBe(true)
+    expect(canSelfApprove(['lead@myt.com', 'dba@myt.com'], 'dba@myt.com')).toBe(true)
+  })
+
+  test('an absent email is denied', () => {
+    expect(canSelfApprove(['lead@myt.com'], 'dba@myt.com')).toBe(false)
+  })
+
+  test('an empty list denies everyone', () => {
+    expect(canSelfApprove([], 'admin@myt.com')).toBe(false)
   })
 })

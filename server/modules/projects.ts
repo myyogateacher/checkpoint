@@ -123,27 +123,27 @@ export function registerProjects(router: Router) {
     await loadProject(user.id, ctx.params.id)
     const envId = ctx.query.get('environment')
 
-    type SettingsRow = { approvers: unknown; releasers: unknown; required_approvals: number; allow_self_approval: number }
+    type SettingsRow = { approvers: unknown; releasers: unknown; required_approvals: number; self_approvers: unknown }
     const serialize = (row: SettingsRow) => ({
       approvers: asJson<string[]>(row.approvers, []),
       releasers: asJson<string[]>(row.releasers, []),
       required_approvals: Number(row.required_approvals),
-      allow_self_approval: !!row.allow_self_approval,
+      self_approvers: asJson<string[]>(row.self_approvers, []),
     })
 
     if (envId) {
       const override = await queryOne<SettingsRow>(
-        'SELECT approvers, releasers, required_approvals, allow_self_approval FROM project_env_settings WHERE project_id = :id AND environment_id = :env',
+        'SELECT approvers, releasers, required_approvals, self_approvers FROM project_env_settings WHERE project_id = :id AND environment_id = :env',
         { id: ctx.params.id, env: envId },
       )
       if (override) return json({ ...serialize(override), inherited: false })
       // No override: fall through and report the project defaults as inherited.
     }
     const row = await queryOne<SettingsRow>(
-      'SELECT approvers, releasers, required_approvals, allow_self_approval FROM project_settings WHERE project_id = :id',
+      'SELECT approvers, releasers, required_approvals, self_approvers FROM project_settings WHERE project_id = :id',
       { id: ctx.params.id },
     )
-    const base = row ? serialize(row) : { approvers: [], releasers: [], required_approvals: 1, allow_self_approval: false }
+    const base = row ? serialize(row) : { approvers: [], releasers: [], required_approvals: 1, self_approvers: [] }
     return json(envId ? { ...base, inherited: true } : base)
   })
 
@@ -151,34 +151,34 @@ export function registerProjects(router: Router) {
     const user = requireCapability(ctx, 'manage_users')
     const project = await loadProject(user.id, ctx.params.id)
     const envId = ctx.query.get('environment')
-    const body = await readJson<{ approvers: string[]; releasers: string[]; required_approvals: number; allow_self_approval: boolean }>(ctx.req)
+    const body = await readJson<{ approvers: string[]; releasers: string[]; required_approvals: number; self_approvers?: string[] }>(ctx.req)
     const params = {
       id: ctx.params.id,
       approvers: JSON.stringify(body.approvers ?? []),
       releasers: JSON.stringify(body.releasers ?? []),
       req: body.required_approvals ?? 1,
-      selfApprove: body.allow_self_approval ? 1 : 0,
+      selfApprovers: JSON.stringify(body.self_approvers ?? []),
     }
     if (envId) {
       const env = await queryOne<{ name: string }>('SELECT name FROM environments WHERE id = :env AND project_id = :id', { env: envId, id: ctx.params.id })
       if (!env) throw badRequest('Unknown environment for this project.')
       await execute(
-        `INSERT INTO project_env_settings (project_id, environment_id, approvers, releasers, required_approvals, allow_self_approval)
-         VALUES (:id, :env, :approvers, :releasers, :req, :selfApprove)
-         ON DUPLICATE KEY UPDATE approvers = :approvers, releasers = :releasers, required_approvals = :req, allow_self_approval = :selfApprove`,
+        `INSERT INTO project_env_settings (project_id, environment_id, approvers, releasers, required_approvals, self_approvers)
+         VALUES (:id, :env, :approvers, :releasers, :req, :selfApprovers)
+         ON DUPLICATE KEY UPDATE approvers = :approvers, releasers = :releasers, required_approvals = :req, self_approvers = :selfApprovers`,
         { ...params, env: envId },
       )
       await writeAudit({ actor: user, orgId: project.org_id, action: 'project.settings', entityType: 'project', entityId: project.id, entityLabel: project.name, summary: `Updated migration governance for ${project.name} (${env.name})` })
-      return json({ ...body, inherited: false })
+      return json({ ...body, self_approvers: body.self_approvers ?? [], inherited: false })
     }
     await execute(
-      `INSERT INTO project_settings (project_id, approvers, releasers, required_approvals, allow_self_approval)
-       VALUES (:id, :approvers, :releasers, :req, :selfApprove)
-       ON DUPLICATE KEY UPDATE approvers = :approvers, releasers = :releasers, required_approvals = :req, allow_self_approval = :selfApprove`,
+      `INSERT INTO project_settings (project_id, approvers, releasers, required_approvals, self_approvers)
+       VALUES (:id, :approvers, :releasers, :req, :selfApprovers)
+       ON DUPLICATE KEY UPDATE approvers = :approvers, releasers = :releasers, required_approvals = :req, self_approvers = :selfApprovers`,
       params,
     )
     await writeAudit({ actor: user, orgId: project.org_id, action: 'project.settings', entityType: 'project', entityId: project.id, entityLabel: project.name, summary: `Updated migration governance for ${project.name}` })
-    return json(body)
+    return json({ ...body, self_approvers: body.self_approvers ?? [] })
   })
 
   // Remove an environment's override so it inherits the project defaults again.

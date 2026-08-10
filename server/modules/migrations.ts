@@ -11,9 +11,9 @@ import { checkSyntax } from '../lib/sqlSyntax'
 import { env } from '../env'
 import type { MigrationStatus, SessionUser } from '../types'
 
-// Sentinel stored in a project's releasers list meaning "any org member may
-// release" (mirrors ALL_USERS on the client). Migrations are only loaded after an
-// org-membership check, so reaching a release action already implies membership.
+// Sentinel stored in a project's approvers/releasers/self-approvers lists meaning
+// "any org member" (mirrors ALL_USERS on the client). Migrations are only loaded
+// after an org-membership check, so reaching an action already implies membership.
 const ALL_USERS = '*'
 
 // Whether `user` may release (apply/schedule) a migration given the project's
@@ -23,6 +23,14 @@ const ALL_USERS = '*'
 export function canRelease(deployGated: boolean, releasers: string[], user: SessionUser): boolean {
   if (deployGated) return can(user.role, 'apply_gated')
   return can(user.role, 'approve') || releasers.includes(ALL_USERS) || releasers.includes(user.email)
+}
+
+// Whether an author may approve their own migration: they must be listed in the
+// project's self-approvers, or the list must contain the ALL_USERS sentinel. This
+// only lifts the "can't approve your own" restriction — the approver
+// authorization check (role or approvers list) still applies.
+export function canSelfApprove(selfApprovers: string[], userEmail: string): boolean {
+  return selfApprovers.includes(ALL_USERS) || selfApprovers.includes(userEmail)
 }
 
 // 403 for a failed release check, worded for the migration's kind.
@@ -58,7 +66,7 @@ interface MigRow {
   approvers: unknown
   releasers: unknown
   required_approvals: number | null
-  allow_self_approval: number | null
+  self_approvers: unknown
 }
 
 // Governance is resolved per environment: a project_env_settings row for the
@@ -68,7 +76,7 @@ const MIG_SELECT = `
          COALESCE(pes.approvers, ps.approvers) AS approvers,
          COALESCE(pes.releasers, ps.releasers) AS releasers,
          COALESCE(pes.required_approvals, ps.required_approvals) AS required_approvals,
-         COALESCE(pes.allow_self_approval, ps.allow_self_approval) AS allow_self_approval
+         COALESCE(pes.self_approvers, ps.self_approvers) AS self_approvers
   FROM migrations m
   JOIN \`databases\` d ON d.id = m.database_id
   JOIN projects p ON p.id = d.project_id
@@ -105,6 +113,7 @@ async function fullMigration(row: MigRow) {
     approvers: asJson<string[]>(row.approvers, []),
     releasers: asJson<string[]>(row.releasers, []),
     required_approvals: requiredApprovals(row.required_approvals),
+    self_approvers: asJson<string[]>(row.self_approvers, []),
     reviewers: reviewers.map((r) => r.reviewer_email),
     queries: queries.map((q) => ({ id: q.id, order: Number(q.ord), sql: q.sql_text })),
     comments: comments.map((c) => ({ id: c.id, author_email: c.author_email, author_name: c.author_name, body: c.body, created_at: iso(c.created_at)! })),
@@ -266,7 +275,7 @@ export function registerMigrations(router: Router) {
         }
       } else {
         const approvers = asJson<string[]>(mig.approvers, [])
-        if (!can(user.role, 'approve') && !approvers.includes(user.email)) {
+        if (!can(user.role, 'approve') && !approvers.includes(ALL_USERS) && !approvers.includes(user.email)) {
           throw forbidden('Only an admin or a designated approver can approve or reject this migration.')
         }
       }
@@ -285,9 +294,9 @@ export function registerMigrations(router: Router) {
 
       if (action === 'approve') {
         if (mig.status !== 'pending_approval') throw badRequest('Only migrations pending approval can be approved.')
-        // The author may only approve their own migration when the project allows it.
-        if (user.email === mig.author_email && !mig.allow_self_approval) {
-          throw badRequest('You cannot approve your own migration. Ask another approver, or enable self-approval in project settings.')
+        // The author may only approve their own migration when granted self-approval.
+        if (user.email === mig.author_email && !canSelfApprove(asJson<string[]>(mig.self_approvers, []), user.email)) {
+          throw badRequest('You cannot approve your own migration. Ask another approver, or ask an admin to grant you self-approval in project settings.')
         }
         // One approval per person; count distinct approvers (including this one)
         // against the project's required-approvals threshold.

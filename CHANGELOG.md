@@ -18,6 +18,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Tokens page** — self-service token management for every user: create
   with scopes + optional expiry (30/60/90 days or none), one-time secret
   reveal with copy, revoke with confirmation, last-used tracking.
+- **Per-user self-approval** — self-approval is now granted to specific people
+  instead of being all-or-nothing. Project settings (and per-environment
+  overrides) carry a `self_approvers` email list; the `*` sentinel ("All Users")
+  means everyone may approve their own migrations. Authors without a grant no
+  longer see an Approve button. Self-approvers still have to be authorized
+  approvers — the grant only lifts the "can't approve your own" restriction.
+- **"All Users" for approvers** — the project approvers list accepts the same
+  `*` sentinel already supported for releasers, so any org member may approve.
+
+### Changed
+
+- **Project settings**: `allow_self_approval` (boolean) is replaced by
+  `self_approvers` (email list) on `GET`/`PUT /api/projects/:id/settings`.
+  Existing projects with the toggle on migrate to `self_approvers: ["*"]`, so
+  behavior is preserved. The `Migration` payload now exposes the resolved
+  `self_approvers` instead of `allow_self_approval`.
 
 ## [1.2.0] - 2026-07-15
 

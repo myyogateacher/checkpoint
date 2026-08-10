@@ -159,7 +159,9 @@ export function MigrationDetailPage() {
   const canEdit = can(user?.role, 'edit')
   const email = user?.email ?? ''
   // Approve/reject: admins or a designated approver; apply: admins or a designated releaser.
-  const canApproveMig = canApprove || migration.approvers.includes(email)
+  const canApproveMig = canApprove || migration.approvers.includes(ALL_USERS) || migration.approvers.includes(email)
+  // Authors need an explicit self-approval grant on top of that (mirrors the server).
+  const canSelfApprove = migration.self_approvers.includes(ALL_USERS) || migration.self_approvers.includes(email)
   // Deployment migrations: only an admin or deployer may apply/schedule —
   // the project's releasers list is not honored (mirrors the server).
   const canApply = migration.deploy_gated
@@ -188,7 +190,8 @@ export function MigrationDetailPage() {
         <FaTimes size={11} /> Reject
       </Button>,
     )
-    if (!alreadyApproved) {
+    // Hidden for an author without a self-approval grant — the server would 400.
+    if (!alreadyApproved && (!isAuthor || canSelfApprove)) {
       actions.push(
         <Button key="approve" onClick={() => transition('approve')} loading={busy}>
           <FaCheck size={11} /> Approve

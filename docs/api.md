@@ -119,9 +119,17 @@ The response is the created migration:
   "queries": [{ "id": "q_1", "order": 1, "sql": "CREATE INDEX …" }],
   "reviewers": ["dba@example.com"],
   "events": [{ "at": "…", "actor_email": "you@example.com", "action": "created", "note": null }]
-  // … approvers, releasers, comments, timestamps
+  // … approvers, releasers, self_approvers, comments, timestamps
 }
 ```
+
+Every migration also carries the governance resolved for its project and
+environment — `approvers`, `releasers`, `self_approvers` and
+`required_approvals` — so a pipeline can tell who is allowed to act on it. All
+three lists are emails, and the `*` sentinel means "any org member".
+`self_approvers` are the users allowed to approve their own migrations (it
+replaces the former `allow_self_approval` boolean; projects that had it enabled
+read as `["*"]`).
 
 From here the migration follows the normal lifecycle in the app: reviewers are
 notified, an admin approves, and a releaser applies it. Poll

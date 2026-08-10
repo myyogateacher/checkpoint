@@ -72,14 +72,16 @@ export interface Project {
 
 // Per-project migration governance.
 export interface ProjectSettings {
-  // Users (by email) allowed to approve migrations in this project.
+  // Users (by email) allowed to approve migrations in this project. May hold the
+  // '*' sentinel, meaning any org member may approve.
   approvers: string[]
   // Users allowed to apply/release approved migrations to the database.
   releasers: string[]
   // How many distinct approvals a migration needs before it can be released.
   required_approvals: number
-  // When true, a migration's author may approve their own migration.
-  allow_self_approval: boolean
+  // Users (by email) who may approve their own migrations. The '*' sentinel
+  // grants self-approval to everyone; an empty list to nobody.
+  self_approvers: string[]
   // Present when fetched for a specific environment: true when the environment
   // has no override of its own and these values come from the project defaults.
   inherited?: boolean
@@ -206,6 +208,9 @@ export interface Migration {
   releasers: string[]
   // How many distinct approvals are required before the migration is approved.
   required_approvals: number
+  // Resolved self-approval governance: authors listed here (or '*' for everyone)
+  // may approve their own migration.
+  self_approvers: string[]
   reviewers: string[]
   queries: MigrationQuery[]
   comments: MigrationComment[]
