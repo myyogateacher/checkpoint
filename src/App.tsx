@@ -177,6 +177,14 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/migrations/:migrationId/edit"
+        element={
+          <RequireAuth>
+            <CreateMigrationPage />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/migrations/:migrationId"
         element={
           <RequireAuth>

@@ -245,6 +245,7 @@ draft ──submit──► pending_approval ──approve──► approved ─
 | GET | `/api/projects/:id/migrations` | any | all migrations across a project's databases |
 | GET | `/api/migrations/:id` | any | full migration incl. queries, reviewers, comments, events |
 | POST | `/api/migrations` | edit | create — body `{ database_id, title, description, queries: string[], submit: boolean }` (`submit:true` goes straight to `pending_approval`) |
+| PATCH | `/api/migrations/:id` | edit/author | edit a **draft** — body `{ title, description, queries: string[], deploy_gated? }` (`queries` replaces the whole list); 409 on any other status |
 | POST | `/api/migrations/:id/submit` | edit/author | transition |
 | POST | `/api/migrations/:id/approve` | approve(admin) | optional `{ note }` |
 | POST | `/api/migrations/:id/reject` | approve(admin) | `{ note }` |
@@ -256,8 +257,8 @@ draft ──submit──► pending_approval ──approve──► approved ─
 > the client's `transitionMigration(id, action)`.
 
 > API-token access: `GET /api/migrations`, `GET /api/migrations/:id`
-> (`migrations:read`) and `POST /api/migrations` (`migrations:write`) also
-> accept Bearer auth. Transitions never do — approve/apply stays in the UI.
+> (`migrations:read`), `POST /api/migrations` and `PATCH /api/migrations/:id`
+> (`migrations:write`) also accept Bearer auth. Transitions never do — approve/apply stays in the UI.
 
 ---
 

@@ -27,6 +27,7 @@ export const TOKEN_ROUTES: Record<string, ApiTokenScope | ApiTokenScope[]> = {
   'GET /api/migrations': 'migrations:read',
   'GET /api/migrations/:id': 'migrations:read',
   'POST /api/migrations': 'migrations:write',
+  'PATCH /api/migrations/:id': 'migrations:write',
   'POST /api/mcp': ANY_SCOPE,
   // Registered only to answer with 405 + Allow: POST instead of a bare 404.
   'GET /api/mcp': ANY_SCOPE,

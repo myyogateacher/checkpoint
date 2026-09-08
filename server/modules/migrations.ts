@@ -1,5 +1,5 @@
-import { type Router, type Ctx, json, readJson, badRequest, notFound, forbidden } from '../lib/http'
-import { query, queryOne, execute } from '../db/pool'
+import { type Router, type Ctx, json, readJson, badRequest, notFound, forbidden, conflict } from '../lib/http'
+import { query, queryOne, execute, transaction } from '../db/pool'
 import { requireUser, requireCapability, can, userOrgIds, assertOrgMember } from '../lib/auth'
 import { newId } from '../lib/ids'
 import { iso, asJson } from '../lib/serialize'
@@ -281,6 +281,39 @@ export async function createMigration(
   return fullMigration(await loadMig(user.id, id))
 }
 
+export interface EditMigrationInput {
+  title: string
+  description?: string | null
+  queries: string[]
+  deploy_gated?: boolean
+}
+
+// Who may edit a draft: its author, or anyone with the `edit` capability — the
+// same "edit/author" authority POST /api/migrations/:id/submit applies.
+export function canEditMigration(user: SessionUser, authorEmail: string): boolean {
+  return user.email === authorEmail || can(user.role, 'edit')
+}
+
+// Everything PATCH /api/migrations/:id can reject without touching the database:
+// authority, the draft-only rule, and the same body validation create runs
+// (title required, at least one non-empty statement, every statement parses for
+// the engine — which is where multi-statement blocks are refused).
+export function assertCanEditDraft(
+  user: SessionUser,
+  mig: { status: MigrationStatus; author_email: string; engine: string },
+  input: EditMigrationInput | null | undefined,
+): void {
+  if (!canEditMigration(user, mig.author_email)) throw forbidden('Your role does not permit this action.')
+  if (mig.status !== 'draft') throw conflict('Only draft migrations can be edited')
+  if (!input?.title?.trim() || !input.queries?.length || !input.queries.some((q) => q?.trim())) {
+    throw badRequest('title and queries are required.')
+  }
+  for (let i = 0; i < input.queries.length; i++) {
+    const syntaxError = checkSyntax((input.queries[i] ?? '').trim(), mig.engine)
+    if (syntaxError) throw badRequest(`Statement ${i + 1}: ${syntaxError}`)
+  }
+}
+
 // Append a comment to a migration. Shared by POST /api/migrations/:id/comments
 // and the MCP add_migration_comment tool. Comments are append-only.
 export async function addMigrationComment(user: SessionUser, migrationId: string, body: string) {
@@ -373,6 +406,40 @@ export function registerMigrations(router: Router) {
         refuseAutoApprove: !!ctx.apiToken,
       }),
     )
+  })
+
+  // Edit a draft: replaces title/description/deploy_gated and the whole query
+  // list. Drafts only — once a migration is in review its statements are what
+  // approvers vouched for, so later changes go through a new migration.
+  router.patch('/api/migrations/:id', async (ctx: Ctx) => {
+    const user = requireUser(ctx)
+    const mig = await loadMig(user.id, ctx.params.id)
+    const body = await readJson<EditMigrationInput>(ctx.req)
+    assertCanEditDraft(user, mig, body)
+    const title = body.title.trim()
+    // Queries are replaced wholesale, so the delete and the re-insert must land
+    // together — a half-applied edit would leave the draft without its SQL.
+    await transaction(async (tx) => {
+      await tx.execute(
+        'UPDATE migrations SET title = :title, description = :desc, deploy_gated = :gated WHERE id = :id',
+        {
+          title,
+          desc: body.description ?? null,
+          gated: (body.deploy_gated ?? !!mig.deploy_gated) ? 1 : 0,
+          id: mig.id,
+        },
+      )
+      await tx.execute('DELETE FROM migration_queries WHERE migration_id = :id', { id: mig.id })
+      for (let i = 0; i < body.queries.length; i++) {
+        await tx.execute('INSERT INTO migration_queries (id, migration_id, ord, sql_text) VALUES (:id, :m, :ord, :sql)', {
+          id: newId('q'), m: mig.id, ord: i + 1, sql: body.queries[i],
+        })
+      }
+    })
+    await addEvent(mig.id, user.email, 'edited', null)
+    const via = ctx.apiToken ? ` via API token "${ctx.apiToken.name}"` : ''
+    await writeAudit({ actor: user, orgId: mig.org_id, action: 'migration.edit', entityType: 'migration', entityId: mig.id, entityLabel: title, summary: `Edited draft migration on ${mig.db_name}${via}` })
+    return json(await fullMigration(await loadMig(user.id, mig.id)))
   })
 
   // Lifecycle transitions.

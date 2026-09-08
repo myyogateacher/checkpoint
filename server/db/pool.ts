@@ -34,6 +34,37 @@ export async function execute(sql: string, params?: Params): Promise<mysql.Resul
   return result as mysql.ResultSetHeader
 }
 
+// A transaction's statement runner — same signature as the module-level `execute`,
+// but bound to the transaction's dedicated connection.
+export interface Tx {
+  execute(sql: string, params?: Params): Promise<mysql.ResultSetHeader>
+}
+
+// Run `fn` inside a single transaction on a dedicated pooled connection: commit on
+// success, roll back on any throw. Only statements issued through the `tx` handed
+// to `fn` take part — the module-level helpers stay on their own connections.
+export async function transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  const conn = await pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    try {
+      const result = await fn({
+        execute: async (sql, params) => {
+          const [res] = await conn.execute(sql, params as never)
+          return res as mysql.ResultSetHeader
+        },
+      })
+      await conn.commit()
+      return result
+    } catch (err) {
+      await conn.rollback()
+      throw err
+    }
+  } finally {
+    conn.release()
+  }
+}
+
 // Run a raw, multi-statement SQL script (a schema dump or a migration) in a single
 // round trip via a short-lived, dedicated connection with multipleStatements
 // enabled — deliberately kept off the shared pool, which stays single-statement to

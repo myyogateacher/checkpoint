@@ -87,16 +87,18 @@ describe('isValidScopeList', () => {
 })
 
 describe('TOKEN_ROUTES', () => {
-  test('exposes only migration read/create and the MCP endpoint', () => {
+  test('exposes only migration read/create/draft-edit and the MCP endpoint', () => {
     expect(Object.keys(TOKEN_ROUTES).sort()).toEqual([
       'DELETE /api/mcp',
       'GET /api/mcp',
       'GET /api/migrations',
       'GET /api/migrations/:id',
+      'PATCH /api/migrations/:id',
       'POST /api/mcp',
       'POST /api/migrations',
     ])
     expect(TOKEN_ROUTES['POST /api/migrations']).toBe('migrations:write')
+    expect(TOKEN_ROUTES['PATCH /api/migrations/:id']).toBe('migrations:write')
   })
 
   // The product invariant: no governance verb is ever reachable with a token.

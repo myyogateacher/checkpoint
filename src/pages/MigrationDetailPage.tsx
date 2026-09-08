@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { FaCheck, FaCheckDouble, FaClock, FaCommentDots, FaPlay, FaPlus, FaTimes, FaUserCheck } from 'react-icons/fa'
+import { useNavigate, useParams } from 'react-router-dom'
+import { FaCheck, FaCheckDouble, FaClock, FaCommentDots, FaPencilAlt, FaPlay, FaPlus, FaTimes, FaUserCheck } from 'react-icons/fa'
 import { api } from '../services/api'
 import type { ManagedUser, Migration } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -28,6 +28,7 @@ function localDateTimeValue(d: Date): string {
 
 export function MigrationDetailPage() {
   const { migrationId = '' } = useParams()
+  const navigate = useNavigate()
   const { user } = useAuth()
   const [migration, setMigration] = useState<Migration | null | undefined>(null)
   const [users, setUsers] = useState<ManagedUser[]>([])
@@ -179,6 +180,9 @@ export function MigrationDetailPage() {
 
   if (migration.status === 'draft' && (isAuthor || can(user?.role, 'edit'))) {
     actions.push(
+      <Button key="edit" variant="secondary" onClick={() => navigate(`/migrations/${migration.id}/edit`)} disabled={busy}>
+        <FaPencilAlt size={11} /> Edit
+      </Button>,
       <Button key="submit" onClick={() => transition('submit')} loading={busy}>
         Submit for approval
       </Button>,

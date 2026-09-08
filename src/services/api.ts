@@ -221,6 +221,13 @@ export const api = {
   }): Promise<Migration> {
     return request<Migration>('/api/migrations', { method: 'POST', body: JSON.stringify(input) })
   },
+  // Draft-only edit: replaces title/description/queries. Rejected with 409 once submitted.
+  updateMigration(
+    id: string,
+    input: { title: string; description: string | null; queries: string[]; deploy_gated?: boolean },
+  ): Promise<Migration> {
+    return request<Migration>(`/api/migrations/${id}`, { method: 'PATCH', body: JSON.stringify(input) })
+  },
   transitionMigration(id: string, action: 'submit' | 'approve' | 'reject' | 'apply', note?: string): Promise<Migration> {
     return request<Migration>(`/api/migrations/${id}/${action}`, { method: 'POST', body: JSON.stringify({ note }) })
   },

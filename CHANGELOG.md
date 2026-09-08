@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Edit a draft migration** (`PATCH /api/migrations/:id`) — a draft's title,
+  description, deploy-gated flag and full statement list can be revised in
+  place instead of being recreated. Drafts only: any other status is refused
+  with 409, since a migration in review holds the statements its approvers
+  vouched for. Open to the migration's author or anyone with the `edit`
+  capability, and to API tokens with `migrations:write`. The statement list is
+  replaced transactionally and validated exactly as create validates it
+  (including the multi-statement rejection); the edit is recorded as an
+  `edited` migration event and a `migration.edit` audit entry.
+
 ## [1.3.0] - 2026-08-10
 
 ### Added

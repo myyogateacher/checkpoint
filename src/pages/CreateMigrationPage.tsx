@@ -4,7 +4,7 @@ import { FaArrowLeft, FaGripVertical, FaPlus, FaTimes, FaTrash } from 'react-ico
 import { api } from '../services/api'
 import { useAuth } from '../context/AuthContext'
 import { useOrg } from '../context/OrgContext'
-import type { Database, Environment, ManagedUser } from '../types'
+import type { Database, Environment, ManagedUser, Migration } from '../types'
 import { ENGINE_LABELS } from '../lib/format'
 import { engineSupportsMigrations } from '../lib/engines'
 import { prevalidateMigration, prevalidateStatement, type Violation } from '../lib/validationRules'
@@ -30,7 +30,9 @@ export function CreateMigrationPage() {
   // Three entry points: scoped to a single database, scoped to a project, or
   // global (from the Migrations page). The last two show a target-database
   // picker; project/global labels disambiguate same-named databases.
-  const { databaseId, projectId } = useParams()
+  // With :migrationId the page runs in edit mode over an existing draft.
+  const { databaseId, projectId, migrationId } = useParams()
+  const editMode = Boolean(migrationId)
   const navigate = useNavigate()
   const { user } = useAuth()
   const { currentOrgId } = useOrg()
@@ -51,6 +53,11 @@ export function CreateMigrationPage() {
   const [hasViolations, setHasViolations] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Edit mode: the loaded migration plus its reviewers at load time, so we only
+  // re-send reviewers when they actually changed.
+  const [migration, setMigration] = useState<Migration | null>(null)
+  const [initialReviewers, setInitialReviewers] = useState<string[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     void api.getUsers().then(setUsers)
@@ -58,6 +65,30 @@ export function CreateMigrationPage() {
 
   useEffect(() => {
     void (async () => {
+      if (migrationId) {
+        const mig = await api.getMigration(migrationId)
+        if (!mig) {
+          setLoadError('Migration not found.')
+          setDatabases([])
+          return
+        }
+        const db = await api.getDatabase(mig.database_id)
+        setMigration(mig)
+        setDatabases(db ? [db] : [])
+        setSelectedDbId(mig.database_id)
+        setTitle(mig.title)
+        setDescription(mig.description ?? '')
+        setDeployGated(mig.deploy_gated)
+        setReviewers(mig.reviewers)
+        setInitialReviewers(mig.reviewers)
+        setQueries(
+          mig.queries.length
+            ? [...mig.queries].sort((a, b) => a.order - b.order).map((q) => newQuery(q.sql))
+            : [newQuery()],
+        )
+        if (mig.status !== 'draft') setLoadError('This migration is no longer a draft and can no longer be edited.')
+        return
+      }
       if (databaseId) {
         const db = await api.getDatabase(databaseId)
         setDatabases(db ? [db] : [])
@@ -79,12 +110,13 @@ export function CreateMigrationPage() {
       setEnvironments(envs)
       setDatabases(dbs)
     })()
-  }, [databaseId, projectId, currentOrgId])
+  }, [migrationId, databaseId, projectId, currentOrgId])
 
   const activeDb = databases?.find((d) => d.id === selectedDbId)
-  const showPicker = !databaseId
+  const showPicker = !databaseId && !editMode
+  const locked = editMode && (Boolean(loadError) || migration?.status !== 'draft')
   // Project scope cascades environment → database; global scope is a flat list.
-  const projectScoped = !databaseId && Boolean(projectId)
+  const projectScoped = !databaseId && !editMode && Boolean(projectId)
   const projectEnvs = useMemo(
     () => environments.filter((e) => e.project_id === projectId),
     [environments, projectId],
@@ -110,6 +142,7 @@ export function CreateMigrationPage() {
     setStmtViolations({})
     setMigrationViolations([])
     setHasViolations(false)
+    if (locked) return
     if (!selectedDbId) return setError('Select a target database.')
     const filled = queries.filter((q) => q.sql.trim())
     if (!title.trim()) return setError('A title is required.')
@@ -145,7 +178,22 @@ export function CreateMigrationPage() {
     const cleaned = filled.map((q) => q.sql.trim())
     setSaving(true)
     try {
-      const migration = await api.createMigration({
+      if (editMode && migrationId) {
+        await api.updateMigration(migrationId, {
+          title: title.trim(),
+          description: description.trim() || null,
+          queries: cleaned,
+          deploy_gated: deployGated,
+        })
+        const changed =
+          reviewers.length !== initialReviewers.length || reviewers.some((r) => !initialReviewers.includes(r))
+        if (changed) await api.setMigrationReviewers(migrationId, reviewers)
+        if (mode === 'submit') await api.transitionMigration(migrationId, 'submit')
+        notify.success(mode === 'submit' ? 'Migration submitted for approval' : 'Changes saved')
+        navigate(`/migrations/${migrationId}`)
+        return
+      }
+      const created = await api.createMigration({
         database_id: selectedDbId,
         title: title.trim(),
         description: description.trim() || null,
@@ -155,9 +203,9 @@ export function CreateMigrationPage() {
         reviewers,
       })
       notify.success(mode === 'submit' ? 'Migration submitted for approval' : 'Migration saved as draft')
-      navigate(`/migrations/${migration.id}`)
+      navigate(`/migrations/${created.id}`)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to create migration'
+      const msg = err instanceof Error ? err.message : editMode ? 'Failed to save migration' : 'Failed to create migration'
       setError(msg)
       notify.error(msg)
     } finally {
@@ -183,13 +231,34 @@ export function CreateMigrationPage() {
         <FaArrowLeft size={11} /> Back
       </button>
       <PageHeader
-        eyebrow="New migration"
-        title={activeDb ? `Migration on ${activeDb.name}` : 'New migration'}
+        eyebrow={editMode ? 'Edit migration' : 'New migration'}
+        title={
+          editMode
+            ? activeDb
+              ? `Edit migration on ${activeDb.name}`
+              : 'Edit migration'
+            : activeDb
+              ? `Migration on ${activeDb.name}`
+              : 'New migration'
+        }
         description={activeDb ? ENGINE_LABELS[activeDb.engine] : undefined}
         actions={activeDb ? <EngineBadge engine={activeDb.engine} /> : null}
       />
 
       <div className="space-y-4">
+        <ErrorBanner message={loadError} />
+
+        {editMode && activeDb ? (
+          <Card className="p-5">
+            <Field label="Target database" hint="The target database can't be changed after the migration is created.">
+              <div className="flex items-center gap-2 rounded-lg border border-slate-200/60 bg-white/40 px-3 py-2 text-sm text-slate-700">
+                {activeDb.name}
+                <span className="text-xs text-slate-500">{ENGINE_LABELS[activeDb.engine]}</span>
+              </div>
+            </Field>
+          </Card>
+        ) : null}
+
         {showPicker ? (
           <Card className="p-5">
             <div className={projectScoped ? 'grid gap-3 sm:grid-cols-2' : ''}>
@@ -348,11 +417,11 @@ export function CreateMigrationPage() {
         <ErrorBanner message={error} />
 
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => submit('draft')} loading={saving}>
-            Save as draft
+          <Button variant="secondary" onClick={() => submit('draft')} loading={saving} disabled={locked}>
+            {editMode ? 'Save changes' : 'Save as draft'}
           </Button>
-          <Button onClick={() => submit('submit')} loading={saving}>
-            Submit for approval
+          <Button onClick={() => submit('submit')} loading={saving} disabled={locked}>
+            {editMode ? 'Save & submit' : 'Submit for approval'}
           </Button>
         </div>
       </div>
