@@ -9,15 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Edit a draft migration** (`PATCH /api/migrations/:id`) — a draft's title,
-  description, deploy-gated flag and full statement list can be revised in
-  place instead of being recreated. Drafts only: any other status is refused
-  with 409, since a migration in review holds the statements its approvers
-  vouched for. Open to the migration's author or anyone with the `edit`
-  capability, and to API tokens with `migrations:write`. The statement list is
-  replaced transactionally and validated exactly as create validates it
-  (including the multi-statement rejection); the edit is recorded as an
-  `edited` migration event and a `migration.edit` audit entry.
+- **Redshift replica protection** — some MySQL DDL never reaches a Redshift target
+  over DMS (MODIFY/CHANGE COLUMN, NULL/NOT NULL, a default change, a character set
+  or collation change, and editing an ENUM/SET definition). DMS suspends that one
+  table and leaves the task `running`, so nothing alarms while the warehouse goes
+  stale. Three parts:
+  - The migration form shows an amber notice on any statement that will do this,
+    naming the table and the reason, only on the database that feeds the replica.
+  - After a successful apply Checkpoint calls DMS `ReloadTables` for those tables,
+    records a `redshift reload` event on the migration and posts to Slack. It can
+    never fail an already-applied migration.
+  - An optional watch (`DMS_WATCH_ENABLED`) polls `DescribeTableStatistics` every
+    five minutes for tables that broke without a Checkpoint migration behind them.
+    First failure is reloaded. A table still broken after the reload's grace window
+    is a Redshift schema mismatch: its target table is dropped and reloaded, which
+    recreates it with the current schema and data. Still broken after that escalates
+    and stops acting. Recovery history lives in the new `dms_table_recovery` table so
+    the escalation survives a restart.
+
+  The drop is gated three ways — `DMS_ALLOW_DROP` must be on, a Redshift connection
+  must be configured (`REDSHIFT_HOST` and friends), and the table must still exist at
+  the MySQL source — and refuses any name that is not a plain identifier. With the
+  gates closed it posts the statement to Slack for a human instead. The Redshift
+  connection lives in the environment rather than as a managed database, since the
+  recovery runs on a cron with no user session behind it.
+
+  Configured with `DMS_TASK_ARN` and `DMS_SOURCE_SCHEMA`; `DMS_AUTO_RELOAD=false`
+  downgrades the migration hook to warn-and-notify.
+
+- **PostgreSQL driver** (`server/lib/drivers/postgres.ts`) — connect, introspect,
+  read-only query and migration apply over the Postgres wire protocol, using `pg`.
+  Registered for Redshift only, which is what the replica recovery needs in order to
+  drop a stale target table; the Postgres family can be added to the registry when
+  live access is wanted there. Redshift has no indexes, so introspection reports
+  none and leaves estimated row counts at 0 rather than guessing.
 
 ## [1.3.0] - 2026-08-10
 

@@ -116,4 +116,24 @@ export const MIGRATIONS: Migration[] = [
       `UPDATE project_env_settings SET self_approvers = IF(allow_self_approval = 1, JSON_ARRAY('*'), JSON_ARRAY())`,
     ],
   },
+  {
+    version: 8,
+    name: 'dms_table_recovery',
+    statements: [
+      // Recovery history for the MySQL -> Redshift DMS replica. One row per table.
+      // Persisted rather than kept in memory because the escalation decision is
+      // historical: a table still in Table Error after we already reloaded it is a
+      // schema mismatch, not a fresh failure, and a restart must not lose that.
+      `CREATE TABLE IF NOT EXISTS dms_table_recovery (
+         schema_name     VARCHAR(128) NOT NULL,
+         table_name      VARCHAR(128) NOT NULL,
+         attempts        INT          NOT NULL DEFAULT 0,
+         last_strategy   VARCHAR(32)  DEFAULT NULL,
+         last_attempt_at DATETIME     DEFAULT NULL,
+         first_seen_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         resolved_at     DATETIME     DEFAULT NULL,
+         PRIMARY KEY (schema_name, table_name)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    ],
+  },
 ]

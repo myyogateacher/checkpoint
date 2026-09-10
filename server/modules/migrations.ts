@@ -6,7 +6,12 @@ import { iso, asJson } from '../lib/serialize'
 import { writeAudit } from '../lib/audit'
 import { getConnectionSecret } from './databases.repo'
 import { applyStatements } from '../lib/externalDb'
-import { notifyMigration } from '../lib/slack'
+import { notifyMigration, notifyOrg } from '../lib/slack'
+import { reloadTables } from '../lib/dms'
+import { recordAttempt } from './redshiftReplica'
+// Shared with the client so the notice shown on the form and the reload done here
+// can never disagree about which DDL breaks the replica.
+import { redshiftReloadTables } from '../../src/lib/redshiftReload'
 import { checkSyntax } from '../lib/sqlSyntax'
 import { env } from '../env'
 import type { MigrationStatus, SessionUser } from '../types'
@@ -154,6 +159,50 @@ export async function dueScheduledMigrations(): Promise<MigRow[]> {
   )
 }
 
+// Some MySQL DDL never reaches the Redshift target: DMS suspends that one table and
+// leaves the task "running", so nothing alarms while the warehouse goes stale. At
+// this point we know exactly which tables the migration just broke, so reload them
+// now instead of finding out from a wrong dashboard days later.
+//
+// Never throws: the migration is already applied and committed, so a DMS or Slack
+// problem must be recorded, not turned into a failed apply the caller might retry.
+async function reloadRedshiftAfterApply(
+  mig: MigRow,
+  schema: string,
+  statements: string[],
+  actorEmail: string,
+): Promise<void> {
+  if (!env.dms.taskArn || !env.dms.sourceSchema || schema !== env.dms.sourceSchema) return
+  const impacted = redshiftReloadTables(statements, mig.engine)
+  if (impacted.length === 0) return
+
+  const tables = impacted.map((i) => i.table)
+  const list = tables.join(', ')
+  const why = impacted.map((i) => `• ${i.table} — ${i.reason}`).join('\n')
+  const channel = env.dms.slackChannel || undefined
+
+  if (!env.dms.autoReload) {
+    await addEvent(mig.id, actorEmail, 'redshift reload needed', `Auto-reload is off. Reload by hand: ${list}`)
+    await notifyOrg(mig.org_id, `:large_orange_circle: *Redshift reload needed* after \`${mig.title}\` on ${mig.db_name}\n${why}\nAuto-reload is off, so these tables stay stale until someone reloads them.`, channel)
+    return
+  }
+
+  try {
+    await reloadTables(env.dms.taskArn, schema, tables)
+    // Recorded in the same history the replica watch reads, so if this reload does
+    // not actually fix the table the watch escalates it to a drop instead of
+    // reloading it a second time from scratch.
+    for (const t of tables) await recordAttempt(schema, t, 'reload')
+    await addEvent(mig.id, actorEmail, 'redshift reload', `Requested a DMS reload for: ${list}`)
+    await notifyOrg(mig.org_id, `:arrows_counterclockwise: *Redshift reload requested* after \`${mig.title}\` on ${mig.db_name}\n${why}\nThese tables read incomplete until the load finishes.`, channel)
+  } catch (err) {
+    const message = (err as Error).message
+    console.error(`[dms] reload after migration ${mig.id} failed: ${message}`)
+    await addEvent(mig.id, actorEmail, 'redshift reload failed', message)
+    await notifyOrg(mig.org_id, `:red_circle: *Redshift reload failed* after \`${mig.title}\` on ${mig.db_name}\n${why}\nThese tables are stale and need a manual reload.\n\`\`\`${message}\`\`\``, channel)
+  }
+}
+
 // Apply an approved migration to its database immediately. Shared by the manual
 // apply route and the background scheduler, so it takes a plain actor email
 // (the scheduler has no session). On success the migration is marked applied and
@@ -181,6 +230,13 @@ export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl
   await addEvent(mig.id, actorEmail, 'apply', null)
   await writeAudit({ actor: { email: actorEmail, name: actorEmail } as SessionUser, orgId: mig.org_id, action: 'migration.apply', entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `Apply migration on ${mig.db_name}` })
   await notifyMigration(mig.org_id, 'apply', mig.id, actorEmail, baseUrl)
+  // Guarded twice over: reloadRedshiftAfterApply swallows its own errors, and this
+  // catch covers anything unexpected. The migration is applied either way.
+  try {
+    await reloadRedshiftAfterApply(mig, conn.database, stmts, actorEmail)
+  } catch (err) {
+    console.error(`[dms] reload hook for migration ${mig.id} threw: ${(err as Error).message}`)
+  }
 }
 
 // List migrations visible to the user, optionally filtered. Shared by

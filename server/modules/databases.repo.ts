@@ -4,6 +4,7 @@ import { assertOrgMember } from '../lib/auth'
 import { asJson, bool, iso } from '../lib/serialize'
 import { decryptSecret } from '../lib/crypto'
 import { introspect } from '../lib/externalDb'
+import { env } from '../env'
 
 export interface ConnectionSecret {
   host: string
@@ -118,5 +119,12 @@ export async function serializeDb(row: DbRow) {
     write_connection: write ? serializeConn(write) : blank('write'),
     last_synced_at: iso(row.last_synced_at),
     table_count: Number(row.table_count),
+    // Drives the "needs a Redshift reload" notice on the migration form. True only
+    // for the one schema the DMS task replicates, so the notice never shows on a
+    // database it does not apply to.
+    replicates_to_redshift:
+      env.dms.sourceSchema.length > 0 && write?.db_name === env.dms.sourceSchema,
+    // Whether that reload happens on its own, or has to be done by hand.
+    redshift_auto_reload: env.dms.autoReload,
   }
 }

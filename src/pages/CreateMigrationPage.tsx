@@ -9,6 +9,7 @@ import { ENGINE_LABELS } from '../lib/format'
 import { engineSupportsMigrations } from '../lib/engines'
 import { prevalidateMigration, prevalidateStatement, type Violation } from '../lib/validationRules'
 import { checkSyntax } from '../lib/sqlSyntax'
+import { redshiftReloadNotice, type ReloadNotice } from '../lib/redshiftReload'
 import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
 import { EngineBadge } from '../components/badges'
@@ -113,6 +114,20 @@ export function CreateMigrationPage() {
   }, [migrationId, databaseId, projectId, currentOrgId])
 
   const activeDb = databases?.find((d) => d.id === selectedDbId)
+
+  // Statements that will leave a Redshift table stale once applied. Advisory: unlike
+  // a validation violation this never blocks submission, it tells the author (and
+  // the reviewer reading over their shoulder) that a table reload follows the apply.
+  // Only shown for the database that actually feeds the DMS replica.
+  const reloadNotices = useMemo(() => {
+    const out: Record<string, ReloadNotice> = {}
+    if (!activeDb?.replicates_to_redshift) return out
+    for (const q of queries) {
+      const notice = redshiftReloadNotice(q.sql, activeDb.engine)
+      if (notice) out[q.key] = notice
+    }
+    return out
+  }, [queries, activeDb])
   const showPicker = !databaseId && !editMode
   const locked = editMode && (Boolean(loadError) || migration?.status !== 'draft')
   // Project scope cascades environment → database; global scope is a flat list.
@@ -383,6 +398,16 @@ export function CreateMigrationPage() {
                       </li>
                     ))}
                   </ul>
+                ) : null}
+                {reloadNotices[q.key] ? (
+                  <p className="mt-2 rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/20 dark:text-amber-200">
+                    <span className="font-semibold">Redshift reload:</span>{' '}
+                    <span className="font-mono">{reloadNotices[q.key].table}</span> will stop
+                    replicating to Redshift. {reloadNotices[q.key].reason}{' '}
+                    {activeDb?.redshift_auto_reload
+                      ? 'Checkpoint reloads it automatically once this migration is applied.'
+                      : 'Automatic reload is off, so it needs a manual reload after apply.'}
+                  </p>
                 ) : null}
               </div>
             ))}
