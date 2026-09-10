@@ -50,6 +50,12 @@ export const env = {
   dms: {
     // Full task ARN; its region is parsed out of the ARN itself.
     taskArn: (process.env.DMS_TASK_ARN ?? '').trim(),
+    // Checkpoint does not run on EC2, so there is no instance role to fall back on
+    // and these are the only credentials available. Passed to the SDK explicitly:
+    // left to the default chain it would try the instance metadata endpoint and fail
+    // with a timeout that says nothing about the real problem.
+    accessKeyId: (process.env.AWS_ACCESS_KEY_ID ?? '').trim(),
+    secretAccessKey: (process.env.AWS_SECRET_ACCESS_KEY ?? '').trim(),
     // MySQL schema the task replicates. A migration triggers a reload only when its
     // write connection points at this schema, so other databases are untouched.
     sourceSchema: (process.env.DMS_SOURCE_SCHEMA ?? '').trim(),

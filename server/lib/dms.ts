@@ -1,14 +1,16 @@
 // AWS DMS client for the MySQL -> Redshift replica: read per-table state, request a
 // reload. Why either is needed is in src/lib/redshiftReload.ts.
 //
-// Credentials come from the standard AWS provider chain (instance/task role, or
-// AWS_* env vars), never from Checkpoint's own secret store.
+// Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, not from
+// Checkpoint's own secret store. The key needs exactly two actions on the task,
+// dms:DescribeTableStatistics and dms:ReloadTables, so it is worthless anywhere else.
 
 import {
   DatabaseMigrationServiceClient,
   DescribeTableStatisticsCommand,
   ReloadTablesCommand,
 } from '@aws-sdk/client-database-migration-service'
+import { env } from '../env'
 
 // us-east-1 out of arn:aws:dms:us-east-1:<account>:task:<id>. The task ARN is the
 // only region source, so moving the task needs no second config change.
@@ -23,7 +25,13 @@ function dms(taskArn: string): DatabaseMigrationServiceClient {
   if (!client) {
     const region = regionFromArn(taskArn)
     if (!region) throw new Error(`Cannot read a region from DMS_TASK_ARN: ${taskArn}`)
-    client = new DatabaseMigrationServiceClient({ region })
+    const { accessKeyId, secretAccessKey } = env.dms
+    if (!accessKeyId || !secretAccessKey) {
+      // Said plainly here rather than letting the SDK hunt for an instance role that
+      // does not exist and time out against the metadata endpoint.
+      throw new Error('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for the DMS replica features.')
+    }
+    client = new DatabaseMigrationServiceClient({ region, credentials: { accessKeyId, secretAccessKey } })
   }
   return client
 }
