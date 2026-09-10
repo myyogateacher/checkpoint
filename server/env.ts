@@ -45,6 +45,52 @@ export const env = {
   // Key used to encrypt managed-database connection passwords at rest (32+ chars).
   secretKey: process.env.APP_SECRET_KEY ?? process.env.SESSION_SECRET ?? 'dev-insecure-secret-change-me',
 
+  // AWS DMS reload for the MySQL -> Redshift replica. Unset taskArn = feature off.
+  // Credentials come from the standard AWS provider chain, never Checkpoint's store.
+  dms: {
+    // Full task ARN; its region is parsed out of the ARN itself.
+    taskArn: (process.env.DMS_TASK_ARN ?? '').trim(),
+    // MySQL schema the task replicates. A migration triggers a reload only when its
+    // write connection points at this schema, so other databases are untouched.
+    sourceSchema: (process.env.DMS_SOURCE_SCHEMA ?? '').trim(),
+    // On by default: a migration that breaks the replica should heal itself. A
+    // reload re-runs the full load, and the task's TargetTablePrepMode decides
+    // whether the Redshift table is emptied or dropped for that window — set false
+    // if that is not acceptable and reload by hand instead.
+    autoReload: process.env.DMS_AUTO_RELOAD !== 'false',
+    // Channel for reload notifications; falls back to the org's Slack channel.
+    slackChannel: (process.env.DMS_SLACK_CHANNEL ?? '').trim(),
+    // Poll DMS for tables that fell out of the replica. On by default once a task
+    // ARN is set, because the migration hook alone cannot tell whether its reload
+    // actually worked — a table needing a drop looks identical to one that healed.
+    // The poll is what closes that loop, and it also catches drift from a manual
+    // ALTER or another tool.
+    watchEnabled: process.env.DMS_WATCH_ENABLED !== 'false',
+    // How long an attempt is given to take effect before the table is judged still
+    // broken. A full load of a large table is not quick.
+    retryGraceMinutes: Number.isFinite(Number(process.env.DMS_RETRY_GRACE_MINUTES))
+      ? Number(process.env.DMS_RETRY_GRACE_MINUTES)
+      : 30,
+    // Dropping a warehouse table is destructive and opt-in. Nothing is lost while it
+    // is a pure replica of MySQL, but that is a fact about this deployment, not a
+    // property of the code, so it stays off until someone turns it on.
+    allowDrop: process.env.DMS_ALLOW_DROP === 'true',
+  },
+
+  // Redshift target connection, used only to drop a table whose schema has drifted
+  // so the next DMS reload recreates it. Configured here rather than as a managed
+  // database in Checkpoint: nothing else needs it, and the recovery runs on a cron
+  // with no user session behind it. Host empty = no drop, describe it in Slack.
+  redshift: {
+    host: (process.env.REDSHIFT_HOST ?? '').trim(),
+    port: Number(process.env.REDSHIFT_PORT ?? 5439),
+    database: (process.env.REDSHIFT_DATABASE ?? '').trim(),
+    username: (process.env.REDSHIFT_USER ?? '').trim(),
+    password: process.env.REDSHIFT_PASSWORD ?? '',
+    // Redshift refuses plaintext on most clusters, so this defaults on.
+    ssl: process.env.REDSHIFT_SSL !== 'false',
+  },
+
   // MySQL metadata store (the app's own database).
   db: {
     url: process.env.APP_DATABASE_URL ?? '',
