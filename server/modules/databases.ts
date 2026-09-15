@@ -94,6 +94,35 @@ export function registerDatabases(router: Router) {
     return json(await serializeDb(await loadDb(user.id, id)))
   })
 
+  // Rename a database and/or replace its tags. Engine, project and environment
+  // are fixed at creation; connections have their own endpoint below.
+  router.patch('/api/databases/:id', async (ctx: Ctx) => {
+    const user = requireCapability(ctx, 'edit')
+    const db = await loadDb(user.id, ctx.params.id)
+    const body = await readJson<{ name?: unknown; tags?: unknown }>(ctx.req)
+
+    const name = body.name === undefined ? db.name : String(body.name).trim()
+    if (!name) throw badRequest('name must not be empty.')
+    if (name.length > 120) throw badRequest('name must be 120 characters or fewer.')
+    let tags: string[]
+    if (body.tags === undefined) {
+      tags = Array.isArray(db.tags) ? (db.tags as string[]) : []
+    } else {
+      if (!Array.isArray(body.tags) || body.tags.some((t) => typeof t !== 'string')) throw badRequest('tags must be an array of strings.')
+      // Same normalisation the create form applies: lower-case, trimmed, de-duplicated.
+      tags = Array.from(new Set((body.tags as string[]).map((t) => t.trim().toLowerCase()).filter(Boolean)))
+    }
+
+    await execute('UPDATE `databases` SET name = :name, tags = :tags WHERE id = :id', { id: db.id, name, tags: JSON.stringify(tags) })
+    const changes: string[] = []
+    if (name !== db.name) changes.push(`renamed ${db.name} → ${name}`)
+    if (JSON.stringify(tags) !== JSON.stringify(Array.isArray(db.tags) ? db.tags : [])) changes.push(`tags: ${tags.length ? tags.map((t) => `#${t}`).join(' ') : 'none'}`)
+    if (changes.length) {
+      await writeAudit({ actor: user, orgId: db.org_id, action: 'database.update', entityType: 'database', entityId: db.id, entityLabel: name, summary: `Updated database ${name} — ${changes.join('; ')}` })
+    }
+    return json(await serializeDb(await loadDb(user.id, db.id)))
+  })
+
   // Validate connection details without saving. Used by the "validate connection"
   // buttons in the add/edit dialogs. When editing an existing connection and the
   // password is left blank, fall back to the stored (decrypted) password.

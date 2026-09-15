@@ -155,6 +155,7 @@ Single row (or key/value): email (SMTP) + Slack config (see §10).
 | GET | `/api/databases?project=:id` | any | list; `project` optional (all if absent) |
 | GET | `/api/databases/:id` | any | single (includes both connections, sans secrets) |
 | POST | `/api/databases` | edit | create — body `DatabaseInput` (project, env, name, engine, tags, read+write connection inputs incl. plaintext password to store encrypted) |
+| PATCH | `/api/databases/:id` | edit | rename and/or retag — body `{ name?, tags? }`; engine/project/environment are immutable; writes a `database.update` audit event |
 | GET | `/api/projects/:id/settings` | any | `ProjectSettings`: `approvers`, `releasers`, `required_approvals`, `self_approvers` |
 | PUT | `/api/projects/:id/settings` | manage_users | upsert the same fields |
 | DELETE | `/api/projects/:id/settings` | manage_users | requires `?environment=`; drops the override |

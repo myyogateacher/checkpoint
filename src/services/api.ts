@@ -136,6 +136,9 @@ export const api = {
   createDatabase(input: DatabaseInput): Promise<Database> {
     return request<Database>('/api/databases', { method: 'POST', body: JSON.stringify(input) })
   },
+  updateDatabase(databaseId: string, patch: { name?: string; tags?: string[] }): Promise<Database> {
+    return request<Database>(`/api/databases/${databaseId}`, { method: 'PATCH', body: JSON.stringify(patch) })
+  },
   getDatabase(databaseId: string): Promise<Database | undefined> {
     return request<Database>(`/api/databases/${databaseId}`)
   },

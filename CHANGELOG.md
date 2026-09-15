@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Edit database name and tags** — a pencil on each database card on the project
+  page opens a dialog to rename the database or change its tags (`PATCH
+  /api/databases/:id`, editors and admins). Engine, environment and connections
+  stay as they are. Each change is recorded as a `database.update` audit event.
+- **Fork a migration** — a Fork button on the migration page opens the new-migration
+  form pre-filled with the title, description, statements, deployment flag and
+  reviewers, with the target database left for you to pick. Useful for promoting a
+  change applied on one environment to the next.
 - **Redshift replica protection** — some MySQL DDL never reaches a Redshift target
   over DMS (MODIFY/CHANGE COLUMN, NULL/NOT NULL, a default change, a character set
   or collation change, and editing an ENUM/SET definition). DMS suspends that one
