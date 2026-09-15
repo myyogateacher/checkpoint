@@ -91,6 +91,10 @@ export const env = {
     host: (process.env.REDSHIFT_HOST ?? '').trim(),
     port: Number(process.env.REDSHIFT_PORT ?? 5439),
     database: (process.env.REDSHIFT_DATABASE ?? '').trim(),
+    // Schema the task lands the replica in. DMS reports the *source* schema in its
+    // table statistics, so when the task maps it to a different name on the target
+    // the drop would aim at a schema that does not exist here. Unset = same name.
+    schema: (process.env.REDSHIFT_SCHEMA ?? '').trim(),
     username: (process.env.REDSHIFT_USER ?? '').trim(),
     password: process.env.REDSHIFT_PASSWORD ?? '',
     // Redshift refuses plaintext on most clusters, so this defaults on.
