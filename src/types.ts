@@ -208,6 +208,8 @@ export interface Migration {
   author_email: string
   // Deployment migration: applied only by an admin or deployer, with its code deploy.
   deploy_gated: boolean
+  // The migration this one was forked from, or null. Cleared if the source is deleted.
+  forked_from: { id: string; title: string; database_name: string } | null
   // Project governance snapshot: who may approve / who may release (apply).
   approvers: string[]
   releasers: string[]

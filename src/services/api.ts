@@ -221,6 +221,7 @@ export const api = {
     submit: boolean
     deploy_gated?: boolean
     reviewers?: string[]
+    forked_from_id?: string | null
   }): Promise<Migration> {
     return request<Migration>('/api/migrations', { method: 'POST', body: JSON.stringify(input) })
   },

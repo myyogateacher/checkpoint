@@ -62,6 +62,9 @@ interface MigRow {
   status: MigrationStatus
   author_email: string
   deploy_gated: number
+  forked_from_id: string | null
+  forked_from_title: string | null
+  forked_from_db_name: string | null
   approved_by: string | null
   approved_at: Date | null
   applied_at: Date | null
@@ -81,10 +84,13 @@ const MIG_SELECT = `
          COALESCE(pes.approvers, ps.approvers) AS approvers,
          COALESCE(pes.releasers, ps.releasers) AS releasers,
          COALESCE(pes.required_approvals, ps.required_approvals) AS required_approvals,
-         COALESCE(pes.self_approvers, ps.self_approvers) AS self_approvers
+         COALESCE(pes.self_approvers, ps.self_approvers) AS self_approvers,
+         fm.title AS forked_from_title, fd.name AS forked_from_db_name
   FROM migrations m
   JOIN \`databases\` d ON d.id = m.database_id
   JOIN projects p ON p.id = d.project_id
+  LEFT JOIN migrations fm ON fm.id = m.forked_from_id
+  LEFT JOIN \`databases\` fd ON fd.id = fm.database_id
   LEFT JOIN project_settings ps ON ps.project_id = p.id
   LEFT JOIN project_env_settings pes ON pes.project_id = p.id AND pes.environment_id = d.environment_id`
 
@@ -115,6 +121,10 @@ export async function fullMigration(row: MigRow) {
     status: row.status,
     author_email: row.author_email,
     deploy_gated: !!row.deploy_gated,
+    // Only when the source still exists: the FK nulls the id when it is deleted.
+    forked_from: row.forked_from_id
+      ? { id: row.forked_from_id, title: row.forked_from_title ?? '', database_name: row.forked_from_db_name ?? '' }
+      : null,
     approvers: asJson<string[]>(row.approvers, []),
     releasers: asJson<string[]>(row.releasers, []),
     required_approvals: requiredApprovals(row.required_approvals),
@@ -263,6 +273,8 @@ export interface CreateMigrationInput {
   submit?: boolean
   deploy_gated?: boolean
   reviewers?: string[]
+  // Set by the Fork button: the migration this one was seeded from.
+  forked_from_id?: string | null
 }
 
 // Open a migration (optionally submitting it). Shared by POST /api/migrations and
@@ -310,10 +322,20 @@ export async function createMigration(
         'Create it as a draft (submit: false) and submit it from the Checkpoint UI.',
     )
   }
+  // A fork must point at a migration in the same org; anything else is dropped
+  // rather than rejected, since the link is informational.
+  let forkedFromId: string | null = null
+  if (input.forked_from_id) {
+    const src = await queryOne<{ org_id: string }>(
+      'SELECT p.org_id FROM migrations m JOIN `databases` d ON d.id = m.database_id JOIN projects p ON p.id = d.project_id WHERE m.id = :id',
+      { id: input.forked_from_id },
+    )
+    if (src && src.org_id === db.org_id) forkedFromId = input.forked_from_id
+  }
   const id = newId('m')
   const status: MigrationStatus = !input.submit ? 'draft' : autoApproved ? 'approved' : 'pending_approval'
-  await execute('INSERT INTO migrations (id, database_id, title, description, status, author_email, deploy_gated) VALUES (:id, :db, :title, :desc, :status, :author, :gated)', {
-    id, db: input.database_id, title: input.title.trim(), desc: input.description ?? null, status, author: user.email, gated: input.deploy_gated ? 1 : 0,
+  await execute('INSERT INTO migrations (id, database_id, title, description, status, author_email, deploy_gated, forked_from_id) VALUES (:id, :db, :title, :desc, :status, :author, :gated, :fork)', {
+    id, db: input.database_id, title: input.title.trim(), desc: input.description ?? null, status, author: user.email, gated: input.deploy_gated ? 1 : 0, fork: forkedFromId,
   })
   if (autoApproved) await execute('UPDATE migrations SET approved_at = NOW() WHERE id = :id', { id })
   for (let i = 0; i < input.queries.length; i++) {

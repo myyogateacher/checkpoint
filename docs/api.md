@@ -106,6 +106,7 @@ Content-Type: application/json
 | `submit` | boolean | `false` → draft; `true` → submitted for approval. Rejected with `403` if the project requires 0 approvals (that would auto-approve — see Authentication above) |
 | `deploy_gated` | boolean | optional — mark as a deployment migration (applied only by an admin/deployer) |
 | `reviewers` | string[] | optional — reviewer emails, tagged in the submit notification |
+| `forked_from_id` | string | optional — id of the migration this one was forked from; shown as a link on the detail page. Ignored if it is not in the same org |
 
 Statements are syntax-checked for the target database's engine; the first
 invalid statement rejects the request with `400`.
