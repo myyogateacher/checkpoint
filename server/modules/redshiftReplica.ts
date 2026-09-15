@@ -124,9 +124,11 @@ async function existsAtSource(t: BrokenTable): Promise<boolean | null> {
 // The reload did not clear it, so the Redshift table's shape no longer matches the
 // source. Drop it and reload, which recreates it with the current schema and data.
 async function recoverSchemaMismatch(t: BrokenTable): Promise<void> {
-  const manual = `DROP TABLE IF EXISTS ${t.schema}.${t.table};   -- then reload ${t.table} in DMS`
+  // DMS names tables by their source schema; the target can land them in another one.
+  const schema = env.redshift.schema || t.schema
+  const manual = `DROP TABLE IF EXISTS ${schema}.${t.table};   -- then reload ${t.table} in DMS`
   const decline = (why: string) =>
-    notify(`:warning: *Redshift schema mismatch* a reload did not fix \`${t.schema}.${t.table}\`, so the Redshift table no longer matches the source.\n${why}\nRun this by hand:\n\`\`\`${manual}\`\`\``)
+    notify(`:warning: *Redshift schema mismatch* a reload did not fix \`${schema}.${t.table}\`, so the Redshift table no longer matches the source.\n${why}\nRun this by hand:\n\`\`\`${manual}\`\`\``)
 
   if (!isSafe(t)) return decline('The table name is not a plain identifier, so Checkpoint will not build a DROP for it.')
   if (!env.dms.allowDrop) return decline('Automatic drop is off (DMS_ALLOW_DROP).')
@@ -148,7 +150,7 @@ async function recoverSchemaMismatch(t: BrokenTable): Promise<void> {
   }
 
   try {
-    await applyStatements('redshift', conn, [`DROP TABLE IF EXISTS "${t.schema}"."${t.table}"`])
+    await applyStatements('redshift', conn, [`DROP TABLE IF EXISTS "${schema}"."${t.table}"`])
   } catch (err) {
     return decline(`The drop failed: ${(err as Error).message}`)
   }
@@ -157,9 +159,9 @@ async function recoverSchemaMismatch(t: BrokenTable): Promise<void> {
   } catch (err) {
     // Worst case to be loud about: the table is gone from Redshift and the reload
     // that would rebuild it did not start.
-    return notify(`:rotating_light: *Redshift table dropped but not reloaded* \`${t.schema}.${t.table}\` was dropped and the DMS reload failed: ${(err as Error).message}\nThe table is missing from Redshift until a reload runs.`)
+    return notify(`:rotating_light: *Redshift table dropped but not reloaded* \`${schema}.${t.table}\` was dropped and the DMS reload failed: ${(err as Error).message}\nThe table is missing from Redshift until a reload runs.`)
   }
-  await notify(`:arrows_counterclockwise: *Redshift schema mismatch fixed* \`${t.schema}.${t.table}\` was dropped and reloaded, so DMS recreates it with the current schema. It reads incomplete until the load finishes.`)
+  await notify(`:arrows_counterclockwise: *Redshift schema mismatch fixed* \`${schema}.${t.table}\` was dropped and reloaded, so DMS recreates it with the current schema. It reads incomplete until the load finishes.`)
 }
 
 // One pass: look at every broken table and take the next step for each.

@@ -32,7 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the MySQL source — and refuses any name that is not a plain identifier. With the
   gates closed it posts the statement to Slack for a human instead. The Redshift
   connection lives in the environment rather than as a managed database, since the
-  recovery runs on a cron with no user session behind it.
+  recovery runs on a cron with no user session behind it. DMS names tables by their
+  MySQL schema; set `REDSHIFT_SCHEMA` when the task lands them in a differently named
+  schema on the target, or the drop aims at a schema that is not there.
 
   Configured with `DMS_TASK_ARN` and `DMS_SOURCE_SCHEMA`; `DMS_AUTO_RELOAD=false`
   downgrades the migration hook to warn-and-notify.
