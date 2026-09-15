@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { FaArrowLeft, FaGripVertical, FaPlus, FaTimes, FaTrash } from 'react-icons/fa'
 import { api } from '../services/api'
 import { useAuth } from '../context/AuthContext'
@@ -32,7 +32,12 @@ export function CreateMigrationPage() {
   // global (from the Migrations page). The last two show a target-database
   // picker; project/global labels disambiguate same-named databases.
   // With :migrationId the page runs in edit mode over an existing draft.
+  // With ?from=<id> (global picker only) the form is a fork: it starts pre-filled
+  // with that migration's content, but the target database is left for the user
+  // to pick — the point of a fork is to run the same change somewhere else.
   const { databaseId, projectId, migrationId } = useParams()
+  const [searchParams] = useSearchParams()
+  const forkFromId = !databaseId && !projectId && !migrationId ? searchParams.get('from') : null
   const editMode = Boolean(migrationId)
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -59,6 +64,8 @@ export function CreateMigrationPage() {
   const [migration, setMigration] = useState<Migration | null>(null)
   const [initialReviewers, setInitialReviewers] = useState<string[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
+  // Fork mode: the migration the form was seeded from, for the "Forked from" note.
+  const [forkSource, setForkSource] = useState<Migration | null>(null)
 
   useEffect(() => {
     void api.getUsers().then(setUsers)
@@ -99,11 +106,29 @@ export function CreateMigrationPage() {
       // Picker mode: load candidate databases plus project/environment names.
       // No default selection — the user picks environment then database.
       // Project-scoped picker filters by projectId; global picker by org.
-      const [dbs, projects, envs] = await Promise.all([
+      const [dbs, projects, envs, source] = await Promise.all([
         api.getDatabases(projectId, projectId ? undefined : currentOrgId ?? undefined),
         api.getProjects(projectId ? undefined : currentOrgId ?? undefined),
         api.getAllEnvironments(),
+        forkFromId ? api.getMigration(forkFromId) : Promise.resolve(null),
       ])
+      if (forkFromId) {
+        if (source) {
+          // Seed everything except the target database, which stays unselected.
+          setForkSource(source)
+          setTitle(source.title)
+          setDescription(source.description ?? '')
+          setDeployGated(source.deploy_gated)
+          setReviewers(source.reviewers)
+          setQueries(
+            source.queries.length
+              ? [...source.queries].sort((a, b) => a.order - b.order).map((q) => newQuery(q.sql))
+              : [newQuery()],
+          )
+        } else {
+          setLoadError('The migration to fork from was not found. Starting from a blank form.')
+        }
+      }
       const projectName = Object.fromEntries(projects.map((p) => [p.id, p.name]))
       const labels: Record<string, string> = {}
       for (const env of envs) labels[env.id] = `${projectName[env.project_id] ?? ''} / ${env.name}`
@@ -111,7 +136,7 @@ export function CreateMigrationPage() {
       setEnvironments(envs)
       setDatabases(dbs)
     })()
-  }, [migrationId, databaseId, projectId, currentOrgId])
+  }, [migrationId, databaseId, projectId, currentOrgId, forkFromId])
 
   const activeDb = databases?.find((d) => d.id === selectedDbId)
 
@@ -246,7 +271,7 @@ export function CreateMigrationPage() {
         <FaArrowLeft size={11} /> Back
       </button>
       <PageHeader
-        eyebrow={editMode ? 'Edit migration' : 'New migration'}
+        eyebrow={editMode ? 'Edit migration' : forkSource ? 'Fork migration' : 'New migration'}
         title={
           editMode
             ? activeDb
@@ -262,6 +287,16 @@ export function CreateMigrationPage() {
 
       <div className="space-y-4">
         <ErrorBanner message={loadError} />
+
+        {forkSource ? (
+          <p className="text-sm text-slate-600">
+            Forked from{' '}
+            <Link to={`/migrations/${forkSource.id}`} className="font-medium text-indigo-600 hover:underline">
+              {forkSource.title}
+            </Link>{' '}
+            on {forkSource.database_name}. Pick the database this copy should run against.
+          </p>
+        ) : null}
 
         {editMode && activeDb ? (
           <Card className="p-5">
