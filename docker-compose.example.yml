@@ -24,6 +24,24 @@ services:
       VITE_ORG: ${VITE_ORG:-}
       # Metadata store — points at the bundled MySQL service.
       APP_DATABASE_URL: mysql://checkpoint:checkpoint@db:3306/checkpoint
+      # Redshift replica protection. All optional: with DMS_TASK_ARN unset none of it
+      # runs. Compose passes only what is listed here, so a new variable must be added
+      # in this block as well as in .env.
+      DMS_TASK_ARN: ${DMS_TASK_ARN:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      DMS_SOURCE_SCHEMA: ${DMS_SOURCE_SCHEMA:-}
+      DMS_AUTO_RELOAD: ${DMS_AUTO_RELOAD:-}
+      DMS_WATCH_ENABLED: ${DMS_WATCH_ENABLED:-}
+      DMS_RETRY_GRACE_MINUTES: ${DMS_RETRY_GRACE_MINUTES:-}
+      DMS_SLACK_CHANNEL: ${DMS_SLACK_CHANNEL:-}
+      DMS_ALLOW_DROP: ${DMS_ALLOW_DROP:-}
+      REDSHIFT_HOST: ${REDSHIFT_HOST:-}
+      REDSHIFT_PORT: ${REDSHIFT_PORT:-}
+      REDSHIFT_DATABASE: ${REDSHIFT_DATABASE:-}
+      REDSHIFT_USER: ${REDSHIFT_USER:-}
+      REDSHIFT_PASSWORD: ${REDSHIFT_PASSWORD:-}
+      REDSHIFT_SSL: ${REDSHIFT_SSL:-}
     depends_on:
       db:
         condition: service_healthy

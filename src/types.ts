@@ -118,6 +118,11 @@ export interface Database {
   write_connection: Connection
   last_synced_at: string | null
   table_count: number
+  // True when this database is the MySQL source of the Redshift DMS replica, so
+  // some DDL needs a table reload after apply.
+  replicates_to_redshift: boolean
+  // Whether Checkpoint reloads that table itself after apply.
+  redshift_auto_reload: boolean
 }
 
 export interface ConnectionInput {

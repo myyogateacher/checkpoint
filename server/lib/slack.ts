@@ -123,6 +123,18 @@ async function postMessage(
 // Add an emoji reaction (Slack short name, no colons) to a message. Best-effort:
 // failures are logged and swallowed, and `already_reacted` counts as success.
 // Requires the `reactions:write` scope on the notification token.
+// Post a standalone message to an org's Slack channel — no migration lifecycle
+// event attached. Used by the Redshift reload notification. Honors `enabled` but no
+// per-event toggle, since those switches are about migration stages. Best-effort
+// like every other notification here.
+export async function notifyOrg(orgId: string, text: string, channel?: string): Promise<void> {
+  const slack = await loadSlack(orgId)
+  if (!slack || !slack.enabled || !slack.notification_token) return
+  const target = channel || slack.channel_id
+  if (!target) return
+  await postMessage(slack, text, { channel: target })
+}
+
 export async function addReaction(slack: SlackSettings, channel: string, ts: string, name: string): Promise<void> {
   try {
     const res = await fetch('https://slack.com/api/reactions.add', {
