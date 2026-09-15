@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   FaCheck,
   FaCheckDouble,
@@ -358,6 +358,16 @@ export function MigrationDetailPage() {
                 </span>
               </Meta>
               <Meta label="Author">{migration.author_email}</Meta>
+              {migration.forked_from ? (
+                <Meta label="Forked from">
+                  <Link to={`/migrations/${migration.forked_from.id}`} className="text-indigo-600 hover:underline" title={migration.forked_from.title}>
+                    {migration.forked_from.title}
+                  </Link>
+                  {migration.forked_from.database_name ? (
+                    <span className="ml-1.5 font-mono text-xs text-slate-500">{migration.forked_from.database_name}</span>
+                  ) : null}
+                </Meta>
+              ) : null}
               <Meta label="Created">{formatDate(migration.created_at)}</Meta>
               <Meta label="Approved by">{migration.approved_by ?? '—'}</Meta>
               {migration.scheduled_for ? (

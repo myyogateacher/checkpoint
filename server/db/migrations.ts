@@ -136,4 +136,18 @@ export const MIGRATIONS: Migration[] = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     ],
   },
+  {
+    version: 9,
+    name: 'migrations_forked_from',
+    statements: [
+      // The migration a fork was seeded from, so the detail page can link back to
+      // it. Nullable: most migrations are not forks. SET NULL rather than CASCADE
+      // because the fork is a real migration in its own right and must outlive
+      // its source.
+      `ALTER TABLE migrations
+         ADD COLUMN forked_from_id VARCHAR(40) DEFAULT NULL,
+         ADD CONSTRAINT fk_migrations_forked_from
+           FOREIGN KEY (forked_from_id) REFERENCES migrations(id) ON DELETE SET NULL`,
+    ],
+  },
 ]

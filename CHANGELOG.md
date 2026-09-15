@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Forked from link** — a migration created with the Fork button now records its
+  source (`migrations.forked_from_id`, schema version 9) and the migration page
+  shows a "Forked from" row in Details linking back to it. `POST /api/migrations`
+  accepts an optional `forked_from_id`. Forks created before this release have no
+  link, since the relationship was not stored.
+
 ## [1.4.0] - 2026-09-15
 
 ### Added

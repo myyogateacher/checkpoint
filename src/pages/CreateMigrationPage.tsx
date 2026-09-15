@@ -241,6 +241,7 @@ export function CreateMigrationPage() {
         submit: mode === 'submit',
         deploy_gated: deployGated,
         reviewers,
+        forked_from_id: forkSource?.id ?? null,
       })
       notify.success(mode === 'submit' ? 'Migration submitted for approval' : 'Migration saved as draft')
       navigate(`/migrations/${created.id}`)
