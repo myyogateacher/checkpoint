@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { FaDatabase, FaPlus, FaTable } from 'react-icons/fa'
+import { FaDatabase, FaPencilAlt, FaPlus, FaTable } from 'react-icons/fa'
 import { api } from '../services/api'
 import type { Database, Environment } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { can, ENGINE_LABELS, relativeTime } from '../lib/format'
 import { EngineBadge, TagList } from '../components/badges'
 import { AddDatabaseModal } from '../components/AddDatabaseModal'
+import { EditDatabaseModal } from '../components/EditDatabaseModal'
 import { Button, Card, Spinner } from '../components/ui'
 import { useProject } from './ProjectLayout'
 
@@ -22,6 +23,8 @@ export function ProjectDatabasesPage() {
   const [environments, setEnvironments] = useState<Environment[] | null>(null)
   const [databases, setDatabases] = useState<Database[]>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [editing, setEditing] = useState<Database | null>(null)
+  const canEdit = can(user?.role, 'edit')
 
   useEffect(() => {
     void (async () => {
@@ -47,7 +50,7 @@ export function ProjectDatabasesPage() {
 
   return (
     <div className="space-y-6">
-      {can(user?.role, 'edit') ? (
+      {canEdit ? (
         <div className="flex justify-end">
           <Button variant="secondary" onClick={() => setShowAdd(true)}>
             <FaPlus size={12} /> Add database
@@ -66,6 +69,17 @@ export function ProjectDatabasesPage() {
             }
             setDatabases((prev) => [...prev, db])
             setShowAdd(false)
+          }}
+        />
+      ) : null}
+
+      {editing ? (
+        <EditDatabaseModal
+          database={editing}
+          onClose={() => setEditing(null)}
+          onUpdated={(updated) => {
+            setDatabases((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
+            setEditing(null)
           }}
         />
       ) : null}
@@ -100,7 +114,25 @@ export function ProjectDatabasesPage() {
                     <span className="flex items-center gap-1.5">
                       <FaTable size={10} className="text-slate-400" /> {db.table_count} tables
                     </span>
-                    <span>synced {relativeTime(db.last_synced_at)}</span>
+                    <span className="flex items-center gap-1.5">
+                      synced {relativeTime(db.last_synced_at)}
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            // The whole card is a link to the schema page; keep this a plain edit.
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setEditing(db)
+                          }}
+                          className="-mr-1 cursor-pointer rounded p-1 text-slate-400 transition hover:bg-white/60 hover:text-slate-700"
+                          title="Edit name and tags"
+                          aria-label={`Edit ${db.name}`}
+                        >
+                          <FaPencilAlt size={11} />
+                        </button>
+                      ) : null}
+                    </span>
                   </div>
                 </div>
               </Link>

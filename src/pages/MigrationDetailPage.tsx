@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FaCheck, FaCheckDouble, FaClock, FaCommentDots, FaPencilAlt, FaPlay, FaPlus, FaTimes, FaUserCheck } from 'react-icons/fa'
+import {
+  FaCheck,
+  FaCheckDouble,
+  FaClock,
+  FaCodeBranch,
+  FaCommentDots,
+  FaPencilAlt,
+  FaPlay,
+  FaPlus,
+  FaTimes,
+  FaUserCheck,
+} from 'react-icons/fa'
 import { api } from '../services/api'
 import type { ManagedUser, Migration } from '../types'
 import { useAuth } from '../context/AuthContext'
@@ -178,6 +189,16 @@ export function MigrationDetailPage() {
     (migration.status === 'pending_approval' || migration.status === 'approved' || migration.status === 'applied')
   const actions: React.ReactNode[] = []
 
+  // Fork: open the new-migration form pre-filled with this migration's content so the
+  // same change can be raised against another database (typically the next environment).
+  // Available in every status — an applied migration is the common case.
+  if (canEdit) {
+    actions.push(
+      <Button key="fork" variant="secondary" onClick={() => navigate(`/migrations/new?from=${migration.id}`)} disabled={busy}>
+        <FaCodeBranch size={11} /> Fork
+      </Button>,
+    )
+  }
   if (migration.status === 'draft' && (isAuthor || can(user?.role, 'edit'))) {
     actions.push(
       <Button key="edit" variant="secondary" onClick={() => navigate(`/migrations/${migration.id}/edit`)} disabled={busy}>
