@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-15
+
 ### Added
 
 - **Edit database name and tags** — a pencil on each database card on the project
@@ -17,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   form pre-filled with the title, description, statements, deployment flag and
   reviewers, with the target database left for you to pick. Useful for promoting a
   change applied on one environment to the next.
+- **Edit a draft migration** (`PATCH /api/migrations/:id`) — a draft's title,
+  description, deploy-gated flag and full statement list can be revised in
+  place instead of being recreated. Drafts only: any other status is refused
+  with 409, since a migration in review holds the statements its approvers
+  vouched for. Open to the migration's author or anyone with the `edit`
+  capability, and to API tokens with `migrations:write`. The statement list is
+  replaced transactionally and validated exactly as create validates it
+  (including the multi-statement rejection); the edit is recorded as an
+  `edited` migration event and a `migration.edit` audit entry.
 - **Redshift replica protection** — some MySQL DDL never reaches a Redshift target
   over DMS (MODIFY/CHANGE COLUMN, NULL/NOT NULL, a default change, a character set
   or collation change, and editing an ENUM/SET definition). DMS suspends that one
@@ -183,7 +194,8 @@ shipping schema changes with review and governance built in.
 - **Platform** — Bun + React/TypeScript, schema auto-migration on boot,
   email/Slack notifications, and an audit log across all sensitive actions.
 
-[Unreleased]: https://github.com/myyogateacher/checkpoint/compare/1.3.0...HEAD
+[Unreleased]: https://github.com/myyogateacher/checkpoint/compare/1.4.0...HEAD
+[1.4.0]: https://github.com/myyogateacher/checkpoint/compare/1.3.0...1.4.0
 [1.3.0]: https://github.com/myyogateacher/checkpoint/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/myyogateacher/checkpoint/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/myyogateacher/checkpoint/compare/1.0.0...1.1.0
