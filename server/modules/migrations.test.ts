@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import {
   GOVERNANCE_ACTIONS,
+  emptyStatusCounts,
+  registerMigrations,
   assertCanEditDraft,
   assertNotTokenPrincipal,
   canEditMigration,
@@ -8,7 +10,8 @@ import {
   canSelfApprove,
   isGovernanceAction,
 } from './migrations'
-import { HttpError, type Ctx } from '../lib/http'
+import { HttpError, Router, type Ctx } from '../lib/http'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParams } from '../lib/paging'
 import { MULTI_STATEMENT_ERROR } from '../lib/sqlSyntax'
 import type { ApiTokenScope, MigrationStatus, SessionUser, UserRole } from '../types'
 
@@ -249,5 +252,205 @@ describe('canEditMigration', () => {
     expect(canEditMigration(user('admin'), 'other@myt.com')).toBe(true)
     expect(canEditMigration(user('viewer'), 'other@myt.com')).toBe(false)
     expect(canEditMigration(user('deployer'), 'other@myt.com')).toBe(false)
+  })
+})
+
+// --- Pagination --------------------------------------------------------------
+
+describe('parsePageParams', () => {
+  const parse = (qs: string) => parsePageParams(new URLSearchParams(qs))
+
+  test('no page params at all → null (the route answers with a bare array)', () => {
+    expect(parse('')).toBeNull()
+    expect(parse('org=o_1&status=draft')).toBeNull()
+  })
+
+  test('either param alone is enough, and the other one defaults', () => {
+    expect(parse('page=3')).toEqual({ page: 3, pageSize: DEFAULT_PAGE_SIZE })
+    expect(parse('page_size=10')).toEqual({ page: 1, pageSize: 10 })
+  })
+
+  test('page must be an integer >= 1', () => {
+    for (const bad of ['0', '-2', '1.5', 'abc', '']) {
+      expect(() => parse(`page=${bad}`)).toThrow('page must be an integer >= 1.')
+    }
+  })
+
+  test('page_size must be an integer within [1, MAX_PAGE_SIZE]', () => {
+    for (const bad of ['0', '-1', '7.5', 'abc', '', String(MAX_PAGE_SIZE + 1), '1000']) {
+      const err = (() => {
+        try {
+          parse(`page_size=${bad}`)
+        } catch (e) {
+          return e as HttpError
+        }
+        throw new Error(`page_size=${bad} did not throw`)
+      })()
+      expect(err.status).toBe(400)
+      expect(err.message).toBe(`page_size must be an integer between 1 and ${MAX_PAGE_SIZE}.`)
+    }
+    expect(parse(`page_size=${MAX_PAGE_SIZE}`)).toEqual({ page: 1, pageSize: MAX_PAGE_SIZE })
+  })
+})
+
+// The route is exercised against an in-memory stand-in for the pool: every
+// listing statement goes through `query`/`queryOne`, so faking those two is
+// enough to drive the real SQL-building and envelope code.
+const ORG = 'o_1'
+
+type FakeRow = { id: string; status: MigrationStatus; database_id: string }
+
+const FAKE_ROWS: FakeRow[] = [
+  ...Array.from({ length: 6 }, (_, i) => ({ id: `m_d${i}`, status: 'draft' as MigrationStatus, database_id: 'db_1' })),
+  ...Array.from({ length: 4 }, (_, i) => ({ id: `m_p${i}`, status: 'pending_approval' as MigrationStatus, database_id: 'db_1' })),
+  { id: 'm_a0', status: 'applied' as MigrationStatus, database_id: 'db_2' },
+]
+
+const migRow = (r: FakeRow) => ({
+  ...r,
+  db_name: 'shop',
+  engine: 'mysql',
+  org_id: ORG,
+  title: r.id,
+  description: null,
+  author_email: 'dev@myt.com',
+  deploy_gated: 0,
+  forked_from_id: null,
+  approvers: '[]',
+  releasers: '[]',
+  self_approvers: '[]',
+  required_approvals: 1,
+  created_at: new Date('2026-01-01T00:00:00Z'),
+  approved_by: null,
+  approved_at: null,
+  applied_at: null,
+  scheduled_for: null,
+  scheduled_by: null,
+})
+
+// Re-derive the filters the module put into the statement, in the order
+// `migrationScope` appends them after the org-scope placeholders.
+function filtersOf(sql: string, params: unknown[]) {
+  let i = 1 // one org in the membership list
+  const out: { database?: string; status?: string } = {}
+  if (sql.includes('m.database_id = ?')) out.database = params[i++] as string
+  if (sql.includes('p.org_id = ?')) i++
+  if (sql.includes('m.status = ?')) out.status = params[i++] as string
+  return out
+}
+
+function matching(sql: string, params: unknown[]): FakeRow[] {
+  const f = filtersOf(sql, params)
+  return FAKE_ROWS.filter((r) => (!f.database || r.database_id === f.database) && (!f.status || r.status === f.status))
+}
+
+mock.module('../db/pool', () => ({
+  pool: {},
+  execute: async () => ({}),
+  transaction: async () => undefined,
+  queryOne: async (sql: string, params: unknown[] = []) =>
+    sql.includes('COUNT(*)') ? { n: matching(sql, params).length } : undefined,
+  query: async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('FROM memberships')) return [{ org_id: ORG }]
+    if (sql.includes('GROUP BY m.status')) {
+      const counts = new Map<string, number>()
+      for (const r of matching(sql, params)) counts.set(r.status, (counts.get(r.status) ?? 0) + 1)
+      return [...counts].map(([status, n]) => ({ status, n }))
+    }
+    // fullMigration's per-migration lookups (queries, reviewers, comments, events).
+    if (sql.includes('FROM migration_')) return []
+    const rows = matching(sql, params).map(migRow)
+    const limit = /LIMIT (\d+) OFFSET (\d+)/.exec(sql)
+    return limit ? rows.slice(Number(limit[2]), Number(limit[2]) + Number(limit[1])) : rows
+  },
+}))
+
+describe('GET /api/migrations — pagination envelope', () => {
+  const router = new Router()
+  registerMigrations(router)
+
+  async function get(qs: string) {
+    const url = new URL(`http://x/api/migrations${qs}`)
+    const match = router.match('GET', url.pathname)!
+    return match.handler({
+      req: new Request(url.toString()),
+      url,
+      params: {},
+      query: url.searchParams,
+      user: user('admin'),
+    })
+  }
+
+  interface Envelope {
+    items: Array<{ id: string; status: MigrationStatus; database_name: string }>
+    total: number
+    page: number
+    page_size: number
+    counts: Record<string, number>
+  }
+  const body = async <T>(qs: string): Promise<T> => (await get(qs)).json() as Promise<T>
+
+  test('without page params the response is still the bare array', async () => {
+    const payload = await body<unknown[]>('')
+    expect(Array.isArray(payload)).toBe(true)
+    expect(payload).toHaveLength(FAKE_ROWS.length)
+  })
+
+  test('with page params the response is the envelope', async () => {
+    const payload = await body<Envelope>('?page=1&page_size=4')
+    expect(Array.isArray(payload)).toBe(false)
+    expect(Object.keys(payload).sort()).toEqual(['counts', 'items', 'page', 'page_size', 'total'])
+    expect(payload.page).toBe(1)
+    expect(payload.page_size).toBe(4)
+    expect(payload.total).toBe(FAKE_ROWS.length)
+    expect(payload.items).toHaveLength(4)
+    // Items are full migration objects, as the unpaginated route returns.
+    expect(payload.items[0]).toMatchObject({ id: 'm_d0', database_name: 'shop', queries: [], events: [] })
+  })
+
+  test('page_size alone paginates from page 1', async () => {
+    const payload = await body<Envelope>('?page_size=2')
+    expect(payload.page).toBe(1)
+    expect(payload.items.map((m) => m.id)).toEqual(['m_d0', 'm_d1'])
+  })
+
+  test('offset walks the list and the last page may be short', async () => {
+    const second = await body<Envelope>('?page=2&page_size=4')
+    expect(second.items.map((m: { id: string }) => m.id)).toEqual(['m_d4', 'm_d5', 'm_p0', 'm_p1'])
+    const last = await body<Envelope>('?page=3&page_size=4')
+    expect(last.items).toHaveLength(3)
+  })
+
+  test('a page past the end is empty but still reports the real total', async () => {
+    const payload = await body<Envelope>('?page=99&page_size=10')
+    expect(payload.items).toEqual([])
+    expect(payload.total).toBe(FAKE_ROWS.length)
+  })
+
+  test('total respects the status filter; counts do not', async () => {
+    const payload = await body<Envelope>('?page=1&page_size=25&status=draft')
+    expect(payload.total).toBe(6)
+    expect(payload.items.every((m) => m.status === 'draft')).toBe(true)
+    expect(payload.counts).toEqual({ ...emptyStatusCounts(), draft: 6, pending_approval: 4, applied: 1 })
+    // 'all' in the UI is the sum of the per-status counts.
+    expect(Object.values(payload.counts).reduce((a, b) => a + b, 0)).toBe(FAKE_ROWS.length)
+  })
+
+  test('counts carry every status, zeros included', async () => {
+    const payload = await body<Envelope>('?page=1')
+    expect(Object.keys(payload.counts).sort()).toEqual(Object.keys(emptyStatusCounts()).sort())
+    expect(payload.counts.failed).toBe(0)
+  })
+
+  test('the database filter still applies alongside paging', async () => {
+    const payload = await body<Envelope>('?page=1&page_size=10&database=db_2')
+    expect(payload.total).toBe(1)
+    expect(payload.items).toHaveLength(1)
+  })
+
+  test('an invalid page_size is a 400 and never reaches the database', async () => {
+    const res = await get('?page=1&page_size=500').catch((e: HttpError) => e)
+    expect(res).toBeInstanceOf(HttpError)
+    expect((res as HttpError).status).toBe(400)
   })
 })

@@ -336,3 +336,35 @@ export interface AuditLogEntry {
   summary: string
   created_at: string
 }
+
+// --- Pagination --------------------------------------------------------------
+
+// Envelope returned by list endpoints when `page` / `page_size` are requested.
+// Without those params those endpoints still return a plain array.
+export interface Paginated<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+
+// Per-status totals under the current scope, ignoring the status filter itself,
+// so the filter pills keep every count while one status is selected.
+export type MigrationStatusCounts = Record<MigrationStatus, number>
+
+export interface MigrationsPage extends Paginated<Migration> {
+  counts: MigrationStatusCounts
+}
+
+// Per-category totals for the audit log (`all` is the sum), ignoring the
+// category filter but honoring the search term.
+export interface AuditCategoryCounts {
+  all: number
+  system: number
+  migration: number
+  manual: number
+}
+
+export interface AuditLogPage extends Paginated<AuditLogEntry> {
+  counts: AuditCategoryCounts
+}

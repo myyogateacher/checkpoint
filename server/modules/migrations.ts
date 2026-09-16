@@ -14,7 +14,8 @@ import { recordAttempt } from './redshiftReplica'
 import { redshiftReloadTables } from '../../src/lib/redshiftReload'
 import { checkSyntax } from '../lib/sqlSyntax'
 import { env } from '../env'
-import type { MigrationStatus, SessionUser } from '../types'
+import { limitClause, parsePageParams } from '../lib/paging'
+import type { MigrationStatus, MigrationStatusCounts, SessionUser } from '../types'
 
 // Sentinel stored in a project's approvers/releasers/self-approvers lists meaning
 // "any org member" (mirrors ALL_USERS on the client). Migrations are only loaded
@@ -249,20 +250,94 @@ export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl
   }
 }
 
-// List migrations visible to the user, optionally filtered. Shared by
-// GET /api/migrations and the MCP list_migrations tool.
-export async function listMigrations(
+export interface MigrationFilters {
+  database?: string | null
+  org?: string | null
+  status?: string | null
+}
+
+// Scope every migration listing to the orgs the user belongs to, plus the
+// optional filters. Returns null when the user is in no org at all (nothing to
+// select), so callers can short-circuit.
+async function migrationScope(
   userId: string,
-  filters: { database?: string | null; org?: string | null; status?: string | null } = {},
-): Promise<MigRow[]> {
+  filters: MigrationFilters,
+  opts: { status?: boolean } = {},
+): Promise<{ where: string; params: unknown[] } | null> {
   const orgs = await userOrgIds(userId)
-  if (orgs.length === 0) return []
+  if (orgs.length === 0) return null
   const where = [`p.org_id IN (${orgs.map(() => '?').join(',')})`]
   const params: unknown[] = [...orgs]
   if (filters.database) { where.push('m.database_id = ?'); params.push(filters.database) }
   if (filters.org) { await assertOrgMember(userId, filters.org); where.push('p.org_id = ?'); params.push(filters.org) }
-  if (filters.status) { where.push('m.status = ?'); params.push(filters.status) }
-  return query<MigRow>(`${MIG_SELECT} WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC`, params)
+  if (opts.status !== false && filters.status) { where.push('m.status = ?'); params.push(filters.status) }
+  return { where: where.join(' AND '), params }
+}
+
+// List migrations visible to the user, optionally filtered. Shared by
+// GET /api/migrations and the MCP list_migrations tool. `limit`/`offset` are
+// optional — without them the whole (filtered) list comes back, as before.
+export async function listMigrations(
+  userId: string,
+  filters: MigrationFilters & { limit?: number; offset?: number } = {},
+): Promise<MigRow[]> {
+  const scope = await migrationScope(userId, filters)
+  if (!scope) return []
+  return query<MigRow>(
+    `${MIG_SELECT} WHERE ${scope.where} ORDER BY m.created_at DESC${limitClause(filters.limit, filters.offset)}`,
+    scope.params,
+  )
+}
+
+// How many migrations match the same scope + filters (including status).
+export async function countMigrations(userId: string, filters: MigrationFilters = {}): Promise<number> {
+  const scope = await migrationScope(userId, filters)
+  if (!scope) return 0
+  const row = await queryOne<{ n: number | string }>(
+    `SELECT COUNT(*) AS n FROM migrations m
+       JOIN \`databases\` d ON d.id = m.database_id
+       JOIN projects p ON p.id = d.project_id
+      WHERE ${scope.where}`,
+    scope.params,
+  )
+  return Number(row?.n ?? 0)
+}
+
+export const MIGRATION_STATUSES: readonly MigrationStatus[] = [
+  'draft',
+  'pending_approval',
+  'approved',
+  'rejected',
+  'running',
+  'applied',
+  'failed',
+]
+
+export function emptyStatusCounts(): MigrationStatusCounts {
+  return Object.fromEntries(MIGRATION_STATUSES.map((s) => [s, 0])) as MigrationStatusCounts
+}
+
+// Per-status counts under the same scope/filters *minus* status — these feed the
+// filter pills, which must keep showing every status' size while one is selected.
+export async function migrationStatusCounts(
+  userId: string,
+  filters: MigrationFilters = {},
+): Promise<MigrationStatusCounts> {
+  const counts = emptyStatusCounts()
+  const scope = await migrationScope(userId, filters, { status: false })
+  if (!scope) return counts
+  const rows = await query<{ status: MigrationStatus; n: number | string }>(
+    `SELECT m.status AS status, COUNT(*) AS n FROM migrations m
+       JOIN \`databases\` d ON d.id = m.database_id
+       JOIN projects p ON p.id = d.project_id
+      WHERE ${scope.where}
+      GROUP BY m.status`,
+    scope.params,
+  )
+  for (const row of rows) {
+    if (row.status in counts) counts[row.status] = Number(row.n)
+  }
+  return counts
 }
 
 export interface CreateMigrationInput {
@@ -455,14 +530,34 @@ export function assertNotTokenPrincipal(ctx: Ctx, action: string): void {
 }
 
 export function registerMigrations(router: Router) {
-  // List (optionally by database or org), scoped to the user's orgs.
+  // List (optionally by database, org or status), scoped to the user's orgs.
+  // With `page`/`page_size` the response is a paginated envelope; without them
+  // it stays the plain array every existing caller expects.
   router.get('/api/migrations', async (ctx: Ctx) => {
     const user = requireUser(ctx)
-    const rows = await listMigrations(user.id, {
+    const filters = {
       database: ctx.query.get('database'),
       org: ctx.query.get('org'),
+      status: ctx.query.get('status'),
+    }
+    const paging = parsePageParams(ctx.query)
+    if (!paging) {
+      const rows = await listMigrations(user.id, filters)
+      return json(await Promise.all(rows.map(fullMigration)))
+    }
+    const { page, pageSize } = paging
+    const [rows, total, counts] = await Promise.all([
+      listMigrations(user.id, { ...filters, limit: pageSize, offset: (page - 1) * pageSize }),
+      countMigrations(user.id, filters),
+      migrationStatusCounts(user.id, filters),
+    ])
+    return json({
+      items: await Promise.all(rows.map(fullMigration)),
+      total,
+      page,
+      page_size: pageSize,
+      counts,
     })
-    return json(await Promise.all(rows.map(fullMigration)))
   })
 
   router.get('/api/migrations/:id', async (ctx: Ctx) => {

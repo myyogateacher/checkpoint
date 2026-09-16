@@ -242,7 +242,7 @@ draft ──submit──► pending_approval ──approve──► approved ─
 
 | Method | Path | Role | Notes |
 | --- | --- | --- | --- |
-| GET | `/api/migrations?database=:id` | any | list (all, or by database) |
+| GET | `/api/migrations?database=:id` | any | list (all, or by `database` / `org` / `status`). With `page` / `page_size` (1–100, default 25) returns `{ items, total, page, page_size, counts }` instead of an array |
 | GET | `/api/projects/:id/migrations` | any | all migrations across a project's databases |
 | GET | `/api/migrations/:id` | any | full migration incl. queries, reviewers, comments, events |
 | POST | `/api/migrations` | edit | create — body `{ database_id, title, description, queries: string[], submit: boolean }` (`submit:true` goes straight to `pending_approval`) |
@@ -309,13 +309,16 @@ Slack) and designed to grow more sections.
 
 | Method | Path | Role | Notes |
 | --- | --- | --- | --- |
-| GET | `/api/audit-logs` | any (admin?) | newest-first system-wide log |
+| GET | `/api/audit-logs` | any (admin?) | newest-first system-wide log (capped at 500 rows). With `page` / `page_size` (1–100, default 25) returns `{ items, total, page, page_size, counts }`, filtered by `category` (`system` / `migration` / `manual`) and `q` (search over summary, actor, entity label, action) |
 
 `AuditLogEntry { id, actor_email, actor_name, action, entity_type, entity_id,
 entity_label, summary, created_at }`.
 
 - `entity_id` lets the UI deep-link migration entries to `/migrations/:id`.
-- The client derives a **category** from the `action` key (do not add a column):
+- The **category** is derived from the `action` key (do not add a column). The
+  server mirrors these rules in SQL (`CATEGORY_SQL` in
+  [`server/modules/audit.ts`](../server/modules/audit.ts)) for the `category`
+  filter and the pill counts; keep the two in step:
   - `migration.*` → *Migration changes* (created/submitted/approved/rejected/applied)
   - `schema.*`, `query.*` → *Manual actions* (e.g. `schema.sync`, `query.read`)
   - everything else (`user.*`, `role.*`, `connection.*`, …) → *System changes*

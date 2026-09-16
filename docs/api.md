@@ -79,10 +79,35 @@ Errors are JSON: `{ "error": "<message>" }`.
 GET /api/migrations                 scope: migrations:read
 GET /api/migrations?database=<id>   filter by database
 GET /api/migrations?org=<id>        filter by organization
+GET /api/migrations?status=<status> filter by status
 ```
 
 Returns an array of migration objects (see shape below), newest first, scoped
 to organizations the token's owner belongs to.
+
+**Pagination.** Add `page` and/or `page_size` and the response becomes an
+envelope instead of an array:
+
+| Param | Type | Notes |
+| --- | --- | --- |
+| `page` | integer | 1-based; defaults to `1`. `400` if < 1 or not an integer |
+| `page_size` | integer | 1–100, defaults to `25`. `400` outside that range |
+
+```json
+{
+  "items": [ /* migration objects */ ],
+  "total": 132,            // rows matching the filters, including `status`
+  "page": 2,
+  "page_size": 25,
+  "counts": {              // per-status totals ignoring the `status` filter
+    "draft": 8, "pending_approval": 3, "approved": 1,
+    "rejected": 2, "running": 0, "applied": 118, "failed": 0
+  }
+}
+```
+
+Omit both params and the response stays the plain array — existing callers are
+unaffected.
 
 ### Get a migration
 

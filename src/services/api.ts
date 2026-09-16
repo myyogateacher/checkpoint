@@ -10,12 +10,15 @@ import type {
   ApiTokenScope,
   AppSettings,
   AuditLogEntry,
+  AuditLogPage,
   Connection,
   Database,
   DatabaseInput,
   Environment,
   ManagedUser,
   Migration,
+  MigrationsPage,
+  MigrationStatus,
   Organization,
   Project,
   ProjectSettings,
@@ -25,6 +28,7 @@ import type {
   SessionState,
   UserRole,
 } from '../types'
+import type { AuditCategory } from '../lib/format'
 import type { ValidationSection } from '../lib/validationRules'
 import type { DatabaseEngine } from '../types'
 
@@ -207,6 +211,21 @@ export const api = {
     const qs = params.toString()
     return request<Migration[]>(`/api/migrations${qs ? `?${qs}` : ''}`)
   },
+  // Paginated variant used by the migrations list screen: the status filter,
+  // paging and the per-status pill counts are all resolved server-side.
+  getMigrationsPage(opts: {
+    org?: string
+    status?: MigrationStatus
+    page: number
+    pageSize: number
+  }): Promise<MigrationsPage> {
+    const params = new URLSearchParams()
+    if (opts.org) params.set('org', opts.org)
+    if (opts.status) params.set('status', opts.status)
+    params.set('page', String(opts.page))
+    params.set('page_size', String(opts.pageSize))
+    return request<MigrationsPage>(`/api/migrations?${params.toString()}`)
+  },
   getProjectMigrations(projectId: string): Promise<Migration[]> {
     return request<Migration[]>(`/api/projects/${projectId}/migrations`)
   },
@@ -296,5 +315,20 @@ export const api = {
   // --- Audit ----------------------------------------------------------------
   getAuditLogs(): Promise<AuditLogEntry[]> {
     return request<AuditLogEntry[]>('/api/audit-logs')
+  },
+  // Paginated variant used by the audit screen: category, search, paging and the
+  // per-category pill counts are all resolved server-side.
+  getAuditLogsPage(opts: {
+    category?: AuditCategory
+    q?: string
+    page: number
+    pageSize: number
+  }): Promise<AuditLogPage> {
+    const params = new URLSearchParams()
+    if (opts.category) params.set('category', opts.category)
+    if (opts.q) params.set('q', opts.q)
+    params.set('page', String(opts.page))
+    params.set('page_size', String(opts.pageSize))
+    return request<AuditLogPage>(`/api/audit-logs?${params.toString()}`)
   },
 }
