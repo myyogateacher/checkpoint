@@ -44,3 +44,22 @@ export interface ApiToken {
 export interface ApiTokenCreated extends ApiToken {
   token: string
 }
+
+// --- Pagination --------------------------------------------------------------
+// Mirrors the client contract in src/types.ts.
+
+export interface Paginated<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export type MigrationStatusCounts = Record<MigrationStatus, number>
+
+export interface AuditCategoryCounts {
+  all: number
+  system: number
+  migration: number
+  manual: number
+}

@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { FaPlus } from 'react-icons/fa'
 import { api } from '../services/api'
-import type { Migration, MigrationStatus } from '../types'
+import type { MigrationsPage, MigrationStatus } from '../types'
 import { STATUS_META, can } from '../lib/format'
 import { useAuth } from '../context/AuthContext'
 import { useOrg } from '../context/OrgContext'
 import { PageHeader } from '../components/PageHeader'
 import { Button, Card, Spinner } from '../components/ui'
 import { MigrationTable } from '../components/MigrationTable'
+import { Pagination } from '../components/Pagination'
 
 const FILTERS: Array<{ value: MigrationStatus | 'all'; label: string }> = [
   { value: 'all', label: 'All' },
@@ -19,21 +20,81 @@ const FILTERS: Array<{ value: MigrationStatus | 'all'; label: string }> = [
   { value: 'rejected', label: 'Rejected' },
 ]
 
+const DEFAULT_PAGE_SIZE = 25
+const PAGE_SIZES = [10, 25, 50, 100]
+// Only the sizes the pager offers are honored; anything else in the URL falls back.
+const readPageSize = (v: string | null): number => {
+  const n = Number(v)
+  return PAGE_SIZES.includes(n) ? n : DEFAULT_PAGE_SIZE
+}
+
+const isStatus = (v: string | null): v is MigrationStatus =>
+  !!v && FILTERS.some((f) => f.value === v && f.value !== 'all')
+
 export function MigrationsListPage() {
   const { user } = useAuth()
   const { currentOrgId } = useOrg()
-  const [migrations, setMigrations] = useState<Migration[] | null>(null)
-  const [filter, setFilter] = useState<MigrationStatus | 'all'>('all')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [data, setData] = useState<MigrationsPage | null>(null)
+  // Refreshing an already-rendered page: keep the old rows on screen (dimmed)
+  // instead of blanking the table back to a spinner.
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Page/status/size live in the URL so back and refresh keep the position.
+  const filter: MigrationStatus | 'all' = isStatus(searchParams.get('status'))
+    ? (searchParams.get('status') as MigrationStatus)
+    : 'all'
+  const page = Math.max(1, Number(searchParams.get('page')) || 1)
+  const pageSize = readPageSize(searchParams.get('page_size'))
+
+  const patchParams = useCallback(
+    (patch: Record<string, string | null>) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          for (const [key, value] of Object.entries(patch)) {
+            if (value === null) next.delete(key)
+            else next.set(key, value)
+          }
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
+
+  // Switching org changes what the current page even means, so go back to page 1.
+  const knownOrg = useRef(currentOrgId)
+  useEffect(() => {
+    if (knownOrg.current === currentOrgId) return
+    knownOrg.current = currentOrgId
+    patchParams({ page: '1' })
+  }, [currentOrgId, patchParams])
 
   useEffect(() => {
-    setMigrations(null)
-    void api.getMigrations(undefined, currentOrgId ?? undefined).then(setMigrations)
-  }, [currentOrgId])
+    let cancelled = false
+    setRefreshing(true)
+    void api
+      .getMigrationsPage({
+        org: currentOrgId ?? undefined,
+        status: filter === 'all' ? undefined : filter,
+        page,
+        pageSize,
+      })
+      .then((result) => {
+        if (!cancelled) setData(result)
+      })
+      .finally(() => {
+        if (!cancelled) setRefreshing(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentOrgId, filter, page, pageSize])
 
-  const filtered = useMemo(() => {
-    if (!migrations) return []
-    return filter === 'all' ? migrations : migrations.filter((m) => m.status === filter)
-  }, [migrations, filter])
+  const counts = data?.counts
+  const total = data?.total ?? 0
 
   return (
     <>
@@ -55,14 +116,15 @@ export function MigrationsListPage() {
       <Card className="p-5">
         <div className="mb-4 flex flex-wrap gap-1 rounded-full border border-white/60 bg-white/55 p-1 md:max-w-fit">
           {FILTERS.map((f) => {
-            const count =
-              f.value === 'all'
-                ? migrations?.length ?? 0
-                : migrations?.filter((m) => m.status === f.value).length ?? 0
+            const count = !counts
+              ? 0
+              : f.value === 'all'
+                ? Object.values(counts).reduce((a, b) => a + b, 0)
+                : counts[f.value] ?? 0
             return (
               <button
                 key={f.value}
-                onClick={() => setFilter(f.value)}
+                onClick={() => patchParams({ status: f.value === 'all' ? null : f.value, page: '1' })}
                 className={`flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition ${
                   filter === f.value
                     ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white'
@@ -76,7 +138,23 @@ export function MigrationsListPage() {
           })}
         </div>
 
-        {migrations === null ? <Spinner /> : <MigrationTable migrations={filtered} />}
+        {data === null ? (
+          <Spinner />
+        ) : (
+          <>
+            <div className={refreshing ? 'opacity-50 transition-opacity' : 'transition-opacity'}>
+              <MigrationTable migrations={data.items} />
+            </div>
+            <Pagination
+              className="mt-4"
+              total={total}
+              page={data.page}
+              pageSize={data.page_size}
+              onPageChange={(next) => patchParams({ page: String(next) })}
+              onPageSizeChange={(size) => patchParams({ page_size: String(size), page: '1' })}
+            />
+          </>
+        )}
       </Card>
 
       <div className="mt-4 flex flex-wrap gap-3 text-xs text-slate-500">
