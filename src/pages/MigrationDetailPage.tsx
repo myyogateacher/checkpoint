@@ -15,7 +15,7 @@ import {
 import { api } from '../services/api'
 import type { ManagedUser, Migration } from '../types'
 import { useAuth } from '../context/AuthContext'
-import { can, formatDate, relativeTime } from '../lib/format'
+import { EDITABLE_STATUSES, can, formatDate, relativeTime } from '../lib/format'
 import { notify } from '../lib/toast'
 import { PageHeader } from '../components/PageHeader'
 import { DeploymentBadge, EngineBadge, StatusBadge } from '../components/badges'
@@ -47,6 +47,7 @@ export function MigrationDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectNote, setRejectNote] = useState('')
+  const [editConfirmOpen, setEditConfirmOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleAt, setScheduleAt] = useState('')
   const [commentBody, setCommentBody] = useState('')
@@ -179,10 +180,14 @@ export function MigrationDetailPage() {
   const canApply = migration.deploy_gated
     ? can(user?.role, 'apply_gated')
     : canApprove || migration.releasers.includes(ALL_USERS) || migration.releasers.includes(email)
+  // Editing resets the approval, so only approvals recorded after the last edit
+  // count — mirrors the SINCE_LAST_EDIT window the server applies.
+  const lastEditAt = migration.events.filter((e) => e.action === 'edited').map((e) => e.at).sort().at(-1) ?? ''
+  const approvals = migration.events.filter((e) => e.action === 'approve' && e.at > lastEditAt)
   // Hide the Approve button once this user has already approved (one vote each).
-  const alreadyApproved = migration.events.some((e) => e.action === 'approve' && e.actor_email === email)
+  const alreadyApproved = approvals.some((e) => e.actor_email === email)
   // Distinct approvers so far, for the approval-progress indicator.
-  const approvedBy = Array.from(new Set(migration.events.filter((e) => e.action === 'approve').map((e) => e.actor_email)))
+  const approvedBy = Array.from(new Set(approvals.map((e) => e.actor_email)))
   // No progress bar when the project requires 0 approvals (nothing to track).
   const showApprovalProgress =
     migration.required_approvals > 0 &&
@@ -199,11 +204,23 @@ export function MigrationDetailPage() {
       </Button>,
     )
   }
-  if (migration.status === 'draft' && (isAuthor || can(user?.role, 'edit'))) {
+  // Editable while in review as well as in draft — but an edit there resets the
+  // approval, so it goes through a confirmation first (mirrors the server rule).
+  const editable = EDITABLE_STATUSES.includes(migration.status)
+  if (editable && (isAuthor || canEdit)) {
     actions.push(
-      <Button key="edit" variant="secondary" onClick={() => navigate(`/migrations/${migration.id}/edit`)} disabled={busy}>
+      <Button
+        key="edit"
+        variant="secondary"
+        onClick={() => (migration.status === 'draft' ? navigate(`/migrations/${migration.id}/edit`) : setEditConfirmOpen(true))}
+        disabled={busy}
+      >
         <FaPencilAlt size={11} /> Edit
       </Button>,
+    )
+  }
+  if (migration.status === 'draft' && (isAuthor || canEdit)) {
+    actions.push(
       <Button key="submit" onClick={() => transition('submit')} loading={busy}>
         Submit for approval
       </Button>,
@@ -482,6 +499,27 @@ export function MigrationDetailPage() {
           </Card>
         </div>
       </div>
+
+      <Modal
+        open={editConfirmOpen}
+        title="Edit this migration?"
+        onClose={() => setEditConfirmOpen(false)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => navigate(`/migrations/${migration.id}/edit`)}>
+              <FaPencilAlt size={11} /> Edit migration
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Saving an edit will reset this migration&rsquo;s approval: it returns to draft, the approvals recorded so far
+          stop counting, any pending schedule is cancelled, and it has to be submitted for approval again.
+        </p>
+      </Modal>
 
       <Modal
         open={rejectOpen}

@@ -3,7 +3,7 @@ import {
   GOVERNANCE_ACTIONS,
   emptyStatusCounts,
   registerMigrations,
-  assertCanEditDraft,
+  assertCanEditMigration,
   assertNotTokenPrincipal,
   canEditMigration,
   canRelease,
@@ -174,10 +174,10 @@ describe('assertNotTokenPrincipal', () => {
   })
 })
 
-// PATCH /api/migrations/:id — drafts are editable by their author or an editor;
-// anything already in review is not, and the body is validated exactly as create
-// validates it.
-describe('assertCanEditDraft', () => {
+// PATCH /api/migrations/:id — draft, pending and approved migrations are editable
+// by their author or an editor (editing something in review resets its approval);
+// anything settled is not, and the body is validated exactly as create validates it.
+describe('assertCanEditMigration', () => {
   const author = user('viewer', 'author@myt.com')
   const mig = (over: Partial<{ status: MigrationStatus; author_email: string; engine: string }> = {}) => ({
     status: 'draft' as MigrationStatus,
@@ -192,26 +192,33 @@ describe('assertCanEditDraft', () => {
     ...over,
   })
 
-  const errorFor = (...args: Parameters<typeof assertCanEditDraft>): HttpError => {
+  const errorFor = (...args: Parameters<typeof assertCanEditMigration>): HttpError => {
     try {
-      assertCanEditDraft(...args)
+      assertCanEditMigration(...args)
     } catch (err) {
       return err as HttpError
     }
-    throw new Error('assertCanEditDraft did not throw')
+    throw new Error('assertCanEditMigration did not throw')
   }
 
   test('a draft passes for its author, and for an editor who is not the author', () => {
-    expect(() => assertCanEditDraft(author, mig(), body())).not.toThrow()
-    expect(() => assertCanEditDraft(user('editor'), mig(), body())).not.toThrow()
-    expect(() => assertCanEditDraft(user('admin'), mig(), body())).not.toThrow()
+    expect(() => assertCanEditMigration(author, mig(), body())).not.toThrow()
+    expect(() => assertCanEditMigration(user('editor'), mig(), body())).not.toThrow()
+    expect(() => assertCanEditMigration(user('admin'), mig(), body())).not.toThrow()
   })
 
-  test('a non-draft is a 409, whatever the status', () => {
-    for (const status of ['pending_approval', 'approved', 'rejected', 'running', 'applied', 'failed'] as const) {
+  test('a migration still in review passes too — editing it resets the approval', () => {
+    for (const status of ['pending_approval', 'approved'] as const) {
+      expect(() => assertCanEditMigration(author, mig({ status }), body())).not.toThrow()
+      expect(() => assertCanEditMigration(user('editor'), mig({ status }), body())).not.toThrow()
+    }
+  })
+
+  test('a settled or in-flight migration is a 409, whatever the status', () => {
+    for (const status of ['rejected', 'running', 'applied', 'failed'] as const) {
       const err = errorFor(user('admin'), mig({ status }), body())
       expect(err.status).toBe(409)
-      expect(err.message).toBe('Only draft migrations can be edited')
+      expect(err.message).toBe('Only draft, pending or approved migrations can be edited')
     }
   })
 
@@ -223,7 +230,7 @@ describe('assertCanEditDraft', () => {
     expect(errorFor(user('deployer'), mig(), body()).status).toBe(403)
   })
 
-  test('authority is checked before the draft rule', () => {
+  test('authority is checked before the status rule', () => {
     expect(errorFor(user('viewer', 'nope@myt.com'), mig({ status: 'applied' }), body()).status).toBe(403)
   })
 
@@ -298,7 +305,7 @@ describe('parsePageParams', () => {
 // enough to drive the real SQL-building and envelope code.
 const ORG = 'o_1'
 
-type FakeRow = { id: string; status: MigrationStatus; database_id: string }
+type FakeRow = { id: string; status: MigrationStatus; database_id: string; required_approvals?: number }
 
 const FAKE_ROWS: FakeRow[] = [
   ...Array.from({ length: 6 }, (_, i) => ({ id: `m_d${i}`, status: 'draft' as MigrationStatus, database_id: 'db_1' })),
@@ -319,7 +326,7 @@ const migRow = (r: FakeRow) => ({
   approvers: '[]',
   releasers: '[]',
   self_approvers: '[]',
-  required_approvals: 1,
+  required_approvals: r.required_approvals ?? 1,
   created_at: new Date('2026-01-01T00:00:00Z'),
   approved_by: null,
   approved_at: null,
@@ -344,22 +351,63 @@ function matching(sql: string, params: unknown[]): FakeRow[] {
   return FAKE_ROWS.filter((r) => (!f.database || r.database_id === f.database) && (!f.status || r.status === f.status))
 }
 
+// Migrations addressed by id (the lifecycle routes), kept out of FAKE_ROWS so the
+// pagination expectations above stay untouched, plus their event log.
+const BY_ID = new Map<string, FakeRow>()
+type FakeEvent = { migration_id: string; at: string; action: string; actor_email: string }
+let EVENTS: FakeEvent[] = []
+
+// Statements the handler issued, so a test can assert on the status flip.
+const EXECUTED: string[] = []
+
+const lastEditAt = (id: string) =>
+  EVENTS.filter((e) => e.migration_id === id && e.action === 'edited')
+    .map((e) => e.at)
+    .sort()
+    .at(-1) ?? ''
+
+// Stand-in for the approval counts, applying the since-last-edit window only when
+// the statement actually carries the predicate — so a query that forgot it counts
+// every approval and the test fails.
+function approvalCount(sql: string, params: Record<string, unknown>) {
+  const id = String(params.id)
+  let rows = EVENTS.filter((e) => e.migration_id === id && e.action === 'approve')
+  if (sql.includes("action = 'edited'")) rows = rows.filter((e) => e.at > lastEditAt(id))
+  if (sql.includes('COUNT(DISTINCT actor_email)')) {
+    return [{ approvals: new Set(rows.map((e) => e.actor_email)).size }]
+  }
+  return [{ mine: rows.filter((e) => e.actor_email === params.email).length }]
+}
+
 mock.module('../db/pool', () => ({
   pool: {},
-  execute: async () => ({}),
+  execute: async (sql: string) => {
+    EXECUTED.push(sql)
+    return {}
+  },
   transaction: async () => undefined,
-  queryOne: async (sql: string, params: unknown[] = []) =>
-    sql.includes('COUNT(*)') ? { n: matching(sql, params).length } : undefined,
-  query: async (sql: string, params: unknown[] = []) => {
+  queryOne: async (sql: string, params: unknown[] | Record<string, unknown> = []) => {
+    if (sql.includes('COUNT(*)')) return { n: matching(sql, params as unknown[]).length }
+    // loadMig
+    if (sql.includes('FROM migrations m')) {
+      const row = BY_ID.get(String((params as Record<string, unknown>).id))
+      return row ? migRow(row) : undefined
+    }
+    return undefined
+  },
+  query: async (sql: string, params: unknown[] | Record<string, unknown> = []) => {
     if (sql.includes('FROM memberships')) return [{ org_id: ORG }]
+    if (sql.includes('FROM migration_events') && sql.includes('COUNT(')) {
+      return approvalCount(sql, params as Record<string, unknown>)
+    }
     if (sql.includes('GROUP BY m.status')) {
       const counts = new Map<string, number>()
-      for (const r of matching(sql, params)) counts.set(r.status, (counts.get(r.status) ?? 0) + 1)
+      for (const r of matching(sql, params as unknown[])) counts.set(r.status, (counts.get(r.status) ?? 0) + 1)
       return [...counts].map(([status, n]) => ({ status, n }))
     }
     // fullMigration's per-migration lookups (queries, reviewers, comments, events).
     if (sql.includes('FROM migration_')) return []
-    const rows = matching(sql, params).map(migRow)
+    const rows = matching(sql, params as unknown[]).map(migRow)
     const limit = /LIMIT (\d+) OFFSET (\d+)/.exec(sql)
     return limit ? rows.slice(Number(limit[2]), Number(limit[2]) + Number(limit[1])) : rows
   },
@@ -452,5 +500,60 @@ describe('GET /api/migrations — pagination envelope', () => {
     const res = await get('?page=1&page_size=500').catch((e: HttpError) => e)
     expect(res).toBeInstanceOf(HttpError)
     expect((res as HttpError).status).toBe(400)
+  })
+})
+
+// Editing a migration resets its approval, so approvals recorded before the last
+// 'edited' event must not count toward the threshold (server/modules/migrations.ts).
+describe('POST /api/migrations/:id/approve — approvals are windowed to the last edit', () => {
+  const router = new Router()
+  registerMigrations(router)
+  const MIG = 'm_rev'
+  const approvedFlip = () => EXECUTED.some((sql) => sql.includes('approved_by = :by'))
+
+  async function approve(as = user('admin')) {
+    const url = new URL(`http://x/api/migrations/${MIG}/approve`)
+    const match = router.match('POST', url.pathname)!
+    return match.handler({
+      req: new Request(url.toString(), { method: 'POST' }),
+      url,
+      params: { id: MIG },
+      query: url.searchParams,
+      user: as,
+    } as unknown as Ctx)
+  }
+
+  // Two approvals required, so one surviving pre-edit approval would be visible.
+  function setup(events: FakeEvent[]) {
+    BY_ID.set(MIG, { id: MIG, status: 'pending_approval', database_id: 'db_1', required_approvals: 2 })
+    EVENTS = events
+    EXECUTED.length = 0
+  }
+  const ev = (at: string, action: string, actor_email = 'a@myt.com'): FakeEvent =>
+    ({ migration_id: MIG, at, action, actor_email })
+
+  test('approvals recorded before the last edit do not count', async () => {
+    setup([ev('2026-01-01T10:00:00Z', 'approve'), ev('2026-01-01T11:00:00Z', 'edited', 'dev@myt.com')])
+    await approve()
+    // Only this approval counts (1 of 2), so the migration stays pending.
+    expect(approvedFlip()).toBe(false)
+  })
+
+  test('approvals recorded after the last edit still count', async () => {
+    setup([ev('2026-01-01T11:00:00Z', 'edited', 'dev@myt.com'), ev('2026-01-01T12:00:00Z', 'approve')])
+    await approve()
+    expect(approvedFlip()).toBe(true)
+  })
+
+  test('a pre-edit approval does not block the same approver from approving again', async () => {
+    setup([ev('2026-01-01T10:00:00Z', 'approve', 'admin@myt.com'), ev('2026-01-01T11:00:00Z', 'edited', 'dev@myt.com')])
+    expect(await approve().then(() => null).catch((e: HttpError) => e)).toBeNull()
+  })
+
+  test('an approval after the last edit is still one vote per person', async () => {
+    setup([ev('2026-01-01T11:00:00Z', 'edited', 'dev@myt.com'), ev('2026-01-01T12:00:00Z', 'approve', 'admin@myt.com')])
+    const err = await approve().then(() => null).catch((e: HttpError) => e)
+    expect(err?.status).toBe(400)
+    expect(err?.message).toBe('You have already approved this migration.')
   })
 })

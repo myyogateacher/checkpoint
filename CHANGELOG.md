@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepts an optional `forked_from_id`. Forks created before this release have no
   link, since the relationship was not stored.
 
+### Changed
+
+- **Migrations can be edited while in review** — `PATCH /api/migrations/:id` and
+  the Edit button now accept a migration that is `pending_approval` or `approved`,
+  not just a draft. Saving such an edit resets the approval: the migration returns
+  to `draft`, the approvals recorded so far stop counting toward the required
+  threshold, and any pending schedule is cancelled, so the author re-submits and
+  approvers review the new statements. Applied and rejected migrations are still
+  immutable (409).
+
 ## [1.4.0] - 2026-09-15
 
 ### Added

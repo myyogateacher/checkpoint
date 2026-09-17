@@ -41,6 +41,10 @@ export const ROLE_STYLES: Record<UserRole, string> = {
   viewer: 'border-slate-200/70 bg-slate-50/80 text-slate-600',
 }
 
+// Statuses a migration may still be edited in (mirrors the server). Editing one
+// that is past draft resets its approval and returns it to draft.
+export const EDITABLE_STATUSES: MigrationStatus[] = ['draft', 'pending_approval', 'approved']
+
 export const STATUS_META: Record<MigrationStatus, { label: string; style: string }> = {
   draft: { label: 'Draft', style: 'border-slate-200/70 bg-slate-50/80 text-slate-600 dark:border-slate-500/40 dark:bg-slate-600/30 dark:text-slate-200' },
   pending_approval: { label: 'Pending approval', style: 'border-amber-200/70 bg-amber-50/80 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/25 dark:text-amber-200' },

@@ -5,7 +5,7 @@ import { api } from '../services/api'
 import { useAuth } from '../context/AuthContext'
 import { useOrg } from '../context/OrgContext'
 import type { Database, Environment, ManagedUser, Migration } from '../types'
-import { ENGINE_LABELS } from '../lib/format'
+import { EDITABLE_STATUSES, ENGINE_LABELS } from '../lib/format'
 import { engineSupportsMigrations } from '../lib/engines'
 import { prevalidateMigration, prevalidateStatement, type Violation } from '../lib/validationRules'
 import { checkSyntax } from '../lib/sqlSyntax'
@@ -94,7 +94,7 @@ export function CreateMigrationPage() {
             ? [...mig.queries].sort((a, b) => a.order - b.order).map((q) => newQuery(q.sql))
             : [newQuery()],
         )
-        if (mig.status !== 'draft') setLoadError('This migration is no longer a draft and can no longer be edited.')
+        if (!EDITABLE_STATUSES.includes(mig.status)) setLoadError('This migration has been settled and can no longer be edited.')
         return
       }
       if (databaseId) {
@@ -154,7 +154,9 @@ export function CreateMigrationPage() {
     return out
   }, [queries, activeDb])
   const showPicker = !databaseId && !editMode
-  const locked = editMode && (Boolean(loadError) || migration?.status !== 'draft')
+  const locked = editMode && (Boolean(loadError) || !migration || !EDITABLE_STATUSES.includes(migration.status))
+  // Editing a migration that is already in review resets its approval server-side.
+  const resetsApproval = editMode && !locked && migration?.status !== 'draft'
   // Project scope cascades environment → database; global scope is a flat list.
   const projectScoped = !databaseId && !editMode && Boolean(projectId)
   const projectEnvs = useMemo(
@@ -288,6 +290,14 @@ export function CreateMigrationPage() {
 
       <div className="space-y-4">
         <ErrorBanner message={loadError} />
+
+        {resetsApproval ? (
+          <p className="rounded-lg border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/25 dark:text-amber-200">
+            This migration is already in review. Saving your changes resets its approval: it returns to draft, the
+            approvals recorded so far stop counting, any pending schedule is cancelled, and it has to be submitted for
+            approval again.
+          </p>
+        ) : null}
 
         {forkSource ? (
           <p className="text-sm text-slate-600">

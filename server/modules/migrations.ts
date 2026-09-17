@@ -163,6 +163,23 @@ const NEXT_STATUS: Record<string, MigrationStatus> = {
   apply: 'applied',
 }
 
+// Predicate restricting `migration_events` rows to those recorded after the most
+// recent edit of that migration — editing resets the approval, so approvals that
+// vouched for the previous statements must stop counting. Expects `:id` to be
+// bound to the migration id.
+//
+// Strictly `>`, not `>=`: migration_events.at is a plain DATETIME (second
+// resolution, see docs/schema.sql), and the ids are random UUIDs so they carry no
+// ordering to fall back on. A tie is therefore possible, and `>` is the safe way
+// to break it — it drops an approval made in the same second as the edit, costing
+// an approver one extra click, where `>=` would let a pre-edit approval survive
+// the reset. In practice a tie needs a human to approve within the same second
+// the author saved the edit.
+const SINCE_LAST_EDIT = `at > COALESCE(
+  (SELECT MAX(e.at) FROM migration_events e WHERE e.migration_id = :id AND e.action = 'edited'),
+  '1970-01-01'
+)`
+
 // Approved migrations whose scheduled time has arrived (used by the scheduler).
 export async function dueScheduledMigrations(): Promise<MigRow[]> {
   return query<MigRow>(
@@ -447,17 +464,22 @@ export function canEditMigration(user: SessionUser, authorEmail: string): boolea
   return user.email === authorEmail || can(user.role, 'edit')
 }
 
+// Statuses a migration may be edited in. Editing one that is already in review
+// is allowed, but resets the approval (see the PATCH handler) — what is settled
+// is an *applied* or *rejected* migration, which can only be superseded by a new one.
+export const EDITABLE_STATUSES: MigrationStatus[] = ['draft', 'pending_approval', 'approved']
+
 // Everything PATCH /api/migrations/:id can reject without touching the database:
-// authority, the draft-only rule, and the same body validation create runs
+// authority, the editable-status rule, and the same body validation create runs
 // (title required, at least one non-empty statement, every statement parses for
 // the engine — which is where multi-statement blocks are refused).
-export function assertCanEditDraft(
+export function assertCanEditMigration(
   user: SessionUser,
   mig: { status: MigrationStatus; author_email: string; engine: string },
   input: EditMigrationInput | null | undefined,
 ): void {
   if (!canEditMigration(user, mig.author_email)) throw forbidden('Your role does not permit this action.')
-  if (mig.status !== 'draft') throw conflict('Only draft migrations can be edited')
+  if (!EDITABLE_STATUSES.includes(mig.status)) throw conflict('Only draft, pending or approved migrations can be edited')
   if (!input?.title?.trim() || !input.queries?.length || !input.queries.some((q) => q?.trim())) {
     throw badRequest('title and queries are required.')
   }
@@ -581,20 +603,29 @@ export function registerMigrations(router: Router) {
     )
   })
 
-  // Edit a draft: replaces title/description/deploy_gated and the whole query
-  // list. Drafts only — once a migration is in review its statements are what
-  // approvers vouched for, so later changes go through a new migration.
+  // Edit a migration: replaces title/description/deploy_gated and the whole query
+  // list. Allowed while the migration is draft, pending_approval or approved —
+  // never once it is applied or rejected. Editing something already in review
+  // resets the approval: the migration drops back to draft, any pending schedule
+  // is cleared, and the approvals recorded so far stop counting (they vouched for
+  // the old statements), so the author has to re-submit and be re-approved.
   router.patch('/api/migrations/:id', async (ctx: Ctx) => {
     const user = requireUser(ctx)
     const mig = await loadMig(user.id, ctx.params.id)
     const body = await readJson<EditMigrationInput>(ctx.req)
-    assertCanEditDraft(user, mig, body)
+    assertCanEditMigration(user, mig, body)
     const title = body.title.trim()
+    const resetsApproval = mig.status !== 'draft'
     // Queries are replaced wholesale, so the delete and the re-insert must land
-    // together — a half-applied edit would leave the draft without its SQL.
+    // together — a half-applied edit would leave the draft without its SQL. The
+    // approval reset rides along in the same statement for the same reason.
     await transaction(async (tx) => {
       await tx.execute(
-        'UPDATE migrations SET title = :title, description = :desc, deploy_gated = :gated WHERE id = :id',
+        `UPDATE migrations SET title = :title, description = :desc, deploy_gated = :gated${
+          resetsApproval
+            ? ", status = 'draft', approved_by = NULL, approved_at = NULL, scheduled_for = NULL, scheduled_by = NULL"
+            : ''
+        } WHERE id = :id`,
         {
           title,
           desc: body.description ?? null,
@@ -609,9 +640,17 @@ export function registerMigrations(router: Router) {
         })
       }
     })
-    await addEvent(mig.id, user.email, 'edited', null)
+    // The 'edited' event doubles as the marker approval counting measures from,
+    // so it must be recorded even when nothing was reset.
+    await addEvent(
+      mig.id,
+      user.email,
+      'edited',
+      resetsApproval ? 'Approval reset — the migration returns to draft and must be re-submitted.' : null,
+    )
     const via = ctx.apiToken ? ` via API token "${ctx.apiToken.name}"` : ''
-    await writeAudit({ actor: user, orgId: mig.org_id, action: 'migration.edit', entityType: 'migration', entityId: mig.id, entityLabel: title, summary: `Edited draft migration on ${mig.db_name}${via}` })
+    const what = resetsApproval ? 'Edited migration' : 'Edited draft migration'
+    await writeAudit({ actor: user, orgId: mig.org_id, action: 'migration.edit', entityType: 'migration', entityId: mig.id, entityLabel: title, summary: `${what} on ${mig.db_name}${resetsApproval ? ' (approval reset)' : ''}${via}` })
     return json(await fullMigration(await loadMig(user.id, mig.id)))
   })
 
@@ -658,14 +697,17 @@ export function registerMigrations(router: Router) {
           throw badRequest('You cannot approve your own migration. Ask another approver, or ask an admin to grant you self-approval in project settings.')
         }
         // One approval per person; count distinct approvers (including this one)
-        // against the project's required-approvals threshold.
+        // against the project's required-approvals threshold. Both counts are
+        // windowed to SINCE_LAST_EDIT so approvals of superseded SQL don't carry over.
         const [{ mine }] = await query<{ mine: number }>(
-          "SELECT COUNT(*) AS mine FROM migration_events WHERE migration_id = :id AND action = 'approve' AND actor_email = :email",
+          `SELECT COUNT(*) AS mine FROM migration_events
+            WHERE migration_id = :id AND action = 'approve' AND actor_email = :email AND ${SINCE_LAST_EDIT}`,
           { id: mig.id, email: user.email },
         )
         if (Number(mine) > 0) throw badRequest('You have already approved this migration.')
         const [{ approvals }] = await query<{ approvals: number }>(
-          "SELECT COUNT(DISTINCT actor_email) AS approvals FROM migration_events WHERE migration_id = :id AND action = 'approve'",
+          `SELECT COUNT(DISTINCT actor_email) AS approvals FROM migration_events
+            WHERE migration_id = :id AND action = 'approve' AND ${SINCE_LAST_EDIT}`,
           { id: mig.id },
         )
         const required = requiredApprovals(mig.required_approvals)
