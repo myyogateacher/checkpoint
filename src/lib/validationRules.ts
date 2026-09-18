@@ -1,3 +1,4 @@
+import { Parser } from 'node-sql-parser'
 import type { DatabaseEngine } from '../types'
 import { engineSupportsMigrations } from './engines'
 import { stripLiteralsAndComments } from './sqlSyntax'
@@ -36,6 +37,8 @@ const LEGACY_RULE_ID: Partial<Record<string, string>> = {
   'pg-drop-if-exists': 'drop-if-exists',
   'mysql-drop-if-exists': 'drop-if-exists',
   'ch-drop-if-exists': 'drop-if-exists',
+  'pg-guard-update-delete': 'guard-update-delete',
+  'mysql-guard-update-delete': 'guard-update-delete',
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -112,13 +115,6 @@ function safetySection(): ValidationSection {
         description: 'TRUNCATE is destructive and often non-transactional.',
         enabled: false,
       },
-      {
-        id: 'guard-update-delete',
-        title: 'Require WHERE on UPDATE / DELETE',
-        description: 'An UPDATE or DELETE without a WHERE clause rewrites every row.',
-        example: "UPDATE invoices SET currency = 'USD' WHERE currency IS NULL;",
-        enabled: true,
-      },
     ],
   }
 }
@@ -175,7 +171,6 @@ function conventionsSection(): ValidationSection {
 function clickHouseSafetySection(): ValidationSection {
   const section = safetySection()
   section.rules = section.rules
-    .filter((rule) => rule.id !== 'guard-update-delete')
     .map((rule) => rule.id === 'no-truncate' ? { ...rule, enabled: true, description: 'TRUNCATE removes every part from a table immediately.' } : rule)
   section.rules.unshift(dropRule(
     'ch-drop-if-exists',
@@ -217,6 +212,13 @@ function postgresSafetySection(): ValidationSection {
     example: 'DROP TABLE IF EXISTS legacy_events;',
     enabled: true,
   })
+  section.rules.push({
+    id: 'pg-guard-update-delete',
+    title: 'Require WHERE on UPDATE / DELETE',
+    description: 'A PostgreSQL UPDATE or DELETE without a WHERE clause rewrites every row.',
+    example: "UPDATE invoices SET currency = 'USD' WHERE currency IS NULL;",
+    enabled: true,
+  })
   return section
 }
 
@@ -227,6 +229,13 @@ function mysqlSafetySection(): ValidationSection {
     'Top-level DROP TABLE and DROP VIEW statements must use IF EXISTS so re-running a migration is idempotent. MySQL DROP INDEX does not support IF EXISTS.',
     'DROP TABLE IF EXISTS legacy_orders;',
   ))
+  section.rules.push({
+    id: 'mysql-guard-update-delete',
+    title: 'Require WHERE on UPDATE / DELETE',
+    description: 'A MySQL UPDATE or DELETE without a WHERE clause rewrites every row.',
+    example: "UPDATE invoices SET currency = 'USD' WHERE currency IS NULL;",
+    enabled: true,
+  })
   return section
 }
 
@@ -364,6 +373,19 @@ function addedColumnDefinitions(sql: string): string[] {
   return definitions
 }
 
+function updateDeleteWithoutWhere(sql: string, database: 'PostgresQL' | 'MySQL'): boolean {
+  try {
+    const ast = new Parser().astify(sql, { database })
+    if (Array.isArray(ast)) return false
+    const statement = ast as { type?: string; where?: unknown }
+    return (statement.type === 'update' || statement.type === 'delete') && !statement.where
+  } catch {
+    // Syntax validation runs before these rules in both the form and server.
+    // Do not infer statement type when the dialect parser cannot classify it.
+    return false
+  }
+}
+
 export const RULE_CHECKERS: Record<string, Checker> = {
   'pg-drop-if-exists': (sql) => {
     const code = stripLiteralsAndComments(sql)
@@ -386,14 +408,8 @@ export const RULE_CHECKERS: Record<string, Checker> = {
   'no-drop-database': (sql) =>
     /\bdrop\s+(database|schema)\b/i.test(stripLiteralsAndComments(sql)) ? 'Dropping a database/schema is not allowed in migrations.' : null,
   'no-truncate': (sql) => (/\btruncate\b/i.test(stripLiteralsAndComments(sql)) ? 'TRUNCATE is not allowed.' : null),
-  'guard-update-delete': (sql) => {
-    // Crude: flag UPDATE/DELETE statements that have no WHERE.
-    const stmts = stripLiteralsAndComments(sql).split(';')
-    for (const s of stmts) {
-      if (/\b(update|delete)\b/i.test(s) && !/\bwhere\b/i.test(s)) return 'UPDATE/DELETE without a WHERE clause.'
-    }
-    return null
-  },
+  'pg-guard-update-delete': (sql) => updateDeleteWithoutWhere(sql, 'PostgresQL') ? 'UPDATE/DELETE without a WHERE clause.' : null,
+  'mysql-guard-update-delete': (sql) => updateDeleteWithoutWhere(sql, 'MySQL') ? 'UPDATE/DELETE without a WHERE clause.' : null,
   'max-statements': (sql, value) => {
     const configured = Number(value)
     const limit = Number.isFinite(configured) && Number.isInteger(configured) && configured >= 1 ? configured : 20

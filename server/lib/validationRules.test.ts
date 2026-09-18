@@ -117,6 +117,34 @@ describe('PostgreSQL and MySQL validation rules', () => {
     expect(violationIds("SELECT 'OPTIMIZE TABLE events FINAL'")).not.toContain('ch-no-optimize-final')
   })
 
+  test('classifies MySQL UPDATE and DELETE from the AST, not ON UPDATE column syntax', () => {
+    const mysql = rulesForEngine('mysql')
+    const ids = (sql: string) => prevalidateStatement(sql, mysql).map((v) => v.ruleId)
+
+    expect(ids('CREATE TABLE sessions (updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)')).not.toContain('mysql-guard-update-delete')
+    expect(ids("CREATE TABLE notes (`update` varchar(20) COMMENT 'DELETE without WHERE', CONSTRAINT update_note CHECK (id > 0))")).not.toContain('mysql-guard-update-delete')
+    expect(ids('-- UPDATE users SET active = 0\nSELECT 1')).not.toContain('mysql-guard-update-delete')
+    expect(ids("SELECT 'UPDATE users SET active = 0'")).not.toContain('mysql-guard-update-delete')
+    expect(ids('UPDATE users SET active = 0')).toContain('mysql-guard-update-delete')
+    expect(ids('DELETE FROM users')).toContain('mysql-guard-update-delete')
+    expect(ids('UPDATE users SET active = 0 WHERE id = 1')).not.toContain('mysql-guard-update-delete')
+    expect(ids('DELETE FROM users WHERE id = 1')).not.toContain('mysql-guard-update-delete')
+    expect(ids('WITH stale AS (SELECT id FROM users) UPDATE users SET active = 0')).toContain('mysql-guard-update-delete')
+    expect(ids('WITH ids AS (SELECT id FROM users) SELECT * FROM ids')).not.toContain('mysql-guard-update-delete')
+  })
+
+  test('classifies PostgreSQL top-level and CTE UPDATE/DELETE from the AST', () => {
+    const postgres = rulesForEngine('postgres')
+    const ids = (sql: string) => prevalidateStatement(sql, postgres).map((v) => v.ruleId)
+
+    expect(ids('UPDATE users SET active = false')).toContain('pg-guard-update-delete')
+    expect(ids('DELETE FROM users')).toContain('pg-guard-update-delete')
+    expect(ids('UPDATE users SET active = false WHERE id = 1')).not.toContain('pg-guard-update-delete')
+    expect(ids('DELETE FROM users WHERE id = 1')).not.toContain('pg-guard-update-delete')
+    expect(ids("CREATE TABLE sessions (updated_at timestamp, note text DEFAULT 'UPDATE users')")).not.toContain('pg-guard-update-delete')
+    expect(ids('WITH stale AS (SELECT id FROM users) UPDATE users SET active = false')).toContain('pg-guard-update-delete')
+  })
+
   test('uses only engine-supported DROP IF EXISTS syntax', () => {
     const mysql = rulesForEngine('mysql')
     expect(prevalidateStatement('DROP TABLE old_orders', mysql).map((v) => v.ruleId)).toContain('mysql-drop-if-exists')
