@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Server-enforced migration validation** — enabled, organization-specific
+  validation rules for PostgreSQL, MySQL, and ClickHouse are now checked when a
+  migration is created or edited. This applies equally to browser REST requests
+  and MCP/API-token migration writes, so rules can no longer be bypassed outside
+  the form. MySQL online-DDL and charset checks remain configurable per
+  organization; ClickHouse `ON CLUSTER` checking is opt-in for distributed
+  deployments.
+
 ## [1.5.0] - 2026-09-18
 
 ### Added

@@ -3,7 +3,7 @@ import { queryOne, execute } from '../db/pool'
 import { requireUser, requireCapability, primaryOrgId } from '../lib/auth'
 import { asJson } from '../lib/serialize'
 // Reuse the single catalog source of truth shared with the client.
-import { rulesForEngine, type ValidationSection } from '../../src/lib/validationRules'
+import { mergeValidationSections, rulesForEngine, type ValidationSection } from '../../src/lib/validationRules'
 import type { DatabaseEngine } from '../../src/types'
 
 export function registerValidationRules(router: Router) {
@@ -17,7 +17,7 @@ export function registerValidationRules(router: Router) {
       'SELECT sections FROM validation_rules WHERE org_id = :org AND engine = :engine',
       { org, engine },
     )
-    return json(row ? asJson<ValidationSection[]>(row.sections, defaults) : defaults)
+    return json(row ? mergeValidationSections(defaults, asJson<unknown>(row.sections, [])) : defaults)
   })
 
   router.put('/api/validation-rules/:engine', async (ctx: Ctx) => {

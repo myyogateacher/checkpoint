@@ -27,7 +27,7 @@ export const MULTI_STATEMENT_ERROR =
 // Blank out string literals ('…', "…", `…`) and comments (--, #, /* */) so a
 // `;` scan only sees statement separators. Single pass, because a `--` inside a
 // string isn't a comment and a quote inside a comment doesn't open a string.
-export function stripLiteralsAndComments(sql: string, opts: { keepIdentifiers?: boolean } = {}): string {
+export function stripLiteralsAndComments(sql: string, opts: { keepIdentifiers?: boolean; keepDoubleQuotedIdentifiers?: boolean } = {}): string {
   let out = ''
   for (let i = 0; i < sql.length; i++) {
     const c = sql[i]
@@ -35,7 +35,7 @@ export function stripLiteralsAndComments(sql: string, opts: { keepIdentifiers?: 
       // Backticks quote identifiers, not strings. Callers that need to read the
       // table or column name back out (redshiftReload) keep them; the syntax
       // check blanks everything, which is why this is opt-in.
-      const keep = opts.keepIdentifiers === true && c === '`'
+      const keep = (opts.keepIdentifiers === true && c === '`') || (opts.keepDoubleQuotedIdentifiers === true && c === '"')
       const start = i
       i++
       for (; i < sql.length; i++) {

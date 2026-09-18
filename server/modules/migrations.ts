@@ -16,6 +16,15 @@ import { checkSyntax } from '../lib/sqlSyntax'
 import { env } from '../env'
 import { limitClause, parsePageParams } from '../lib/paging'
 import type { MigrationStatus, MigrationStatusCounts, SessionUser } from '../types'
+import {
+  prevalidateMigration,
+  prevalidateStatement,
+  mergeValidationSections,
+  rulesForEngine,
+  type ValidationSection,
+  type Violation,
+} from '../../src/lib/validationRules'
+import type { DatabaseEngine } from '../../src/types'
 
 // Sentinel stored in a project's approvers/releasers/self-approvers lists meaning
 // "any org member" (mirrors ALL_USERS on the client). Migrations are only loaded
@@ -369,6 +378,61 @@ export interface CreateMigrationInput {
   forked_from_id?: string | null
 }
 
+// Only engines with a first-class validation catalog are enforced. Variants
+// intentionally retain their current behavior until they receive their own rules.
+const SERVER_VALIDATION_ENGINES = new Set([
+  'postgres', 'mysql', 'clickhouse',
+])
+
+export function supportsServerValidation(engine: string): boolean {
+  return SERVER_VALIDATION_ENGINES.has(engine)
+}
+
+// mysql2 may hand JSON columns back as parsed values or as text, depending on
+// driver configuration. Decode before reconciling saved toggles with defaults.
+export function normalizeValidationSections(defaults: ValidationSection[], saved: unknown): ValidationSection[] {
+  return mergeValidationSections(defaults, asJson<unknown>(saved, []))
+}
+
+async function validationSections(orgId: string, engine: string): Promise<ValidationSection[]> {
+  const defaults = rulesForEngine(engine as DatabaseEngine)
+  const row = await queryOne<{ sections: unknown }>(
+    'SELECT sections FROM validation_rules WHERE org_id = :org AND engine = :engine',
+    { org: orgId, engine },
+  )
+  return row ? normalizeValidationSections(defaults, row.sections) : defaults
+}
+
+function violationText(v: Violation): string {
+  return `${v.ruleTitle}: ${v.message}`
+}
+
+// Server-side companion to the form's pre-validation. The UI is helpful, but
+// REST and MCP are both able to submit SQL directly, so enabled per-org rules
+// must be applied again at the point where a migration is persisted.
+export function assertMigrationRules(queries: string[], sections: ValidationSection[]): void {
+  for (let i = 0; i < queries.length; i++) {
+    const violation = prevalidateStatement(queries[i].trim(), sections)[0]
+    if (violation) throw badRequest(`Statement ${i + 1}: ${violationText(violation)}`)
+  }
+  const combinedSql = queries
+    .map((queryText) => queryText.trim())
+    .filter(Boolean)
+    // Delimit every input on a fresh line. A `;` appended directly after a
+    // trailing `--` comment becomes part of that comment and undercounts rules
+    // such as max-statements. An extra delimiter after an existing semicolon is
+    // harmless: empty segments are ignored by the checker.
+    .map((queryText) => `${queryText}\n;`)
+    .join('\n')
+  const violation = prevalidateMigration(combinedSql, sections)[0]
+  if (violation) throw badRequest(`Migration: ${violationText(violation)}`)
+}
+
+async function assertStoredMigrationRules(orgId: string, engine: string, queries: string[]): Promise<void> {
+  if (!supportsServerValidation(engine)) return
+  assertMigrationRules(queries, await validationSections(orgId, engine))
+}
+
 // Open a migration (optionally submitting it). Shared by POST /api/migrations and
 // the MCP create_migration tool.
 //
@@ -403,6 +467,7 @@ export async function createMigration(
     const syntaxError = checkSyntax(input.queries[i].trim(), db.engine)
     if (syntaxError) throw badRequest(`Statement ${i + 1}: ${syntaxError}`)
   }
+  await assertStoredMigrationRules(db.org_id, db.engine, input.queries)
 
   // When the project requires 0 approvals, a submitted migration is approved
   // immediately (ready to release) rather than waiting in pending_approval.
@@ -614,6 +679,7 @@ export function registerMigrations(router: Router) {
     const mig = await loadMig(user.id, ctx.params.id)
     const body = await readJson<EditMigrationInput>(ctx.req)
     assertCanEditMigration(user, mig, body)
+    await assertStoredMigrationRules(mig.org_id, mig.engine, body.queries)
     const title = body.title.trim()
     const resetsApproval = mig.status !== 'draft'
     // Queries are replaced wholesale, so the delete and the re-insert must land

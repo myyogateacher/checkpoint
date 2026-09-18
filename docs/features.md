@@ -238,6 +238,18 @@ draft ──submit──► pending_approval ──approve──► approved ─
   handling and partial-failure semantics.)
 - Every transition appends a `migration_events` row and an `audit_logs` row.
 
+### Validation rules
+
+- Validation rules are supported for **PostgreSQL**, **MySQL**, and
+  **ClickHouse**. Each organization configures its own enabled rules and values
+  on the Validation Rules page.
+- Enabled rules are enforced on both migration creation and editing by the
+  server, including REST and MCP/API-token writes; form validation is only an
+  earlier preview of the same checks.
+- Some rules are deployment-specific: MySQL teams can configure online-DDL and
+  utf8mb4 requirements, and ClickHouse's `ON CLUSTER` requirement is opt-in for
+  distributed deployments (leave it off for standalone or ClickHouse Cloud).
+
 ### Endpoints
 
 | Method | Path | Role | Notes |

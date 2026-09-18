@@ -207,7 +207,9 @@ export function CreateMigrationPage() {
           any = true
         }
       }
-      const combinedSql = filled.map((q) => (q.sql.trim().endsWith(';') ? q.sql.trim() : `${q.sql.trim()};`)).join('\n')
+      // Keep the synthetic separator out of a trailing `--` comment so the
+      // aggregate statement-limit rule counts every editor block.
+      const combinedSql = filled.map((q) => `${q.sql.trim()}\n;`).join('\n')
       const migLevel = prevalidateMigration(combinedSql, sections)
       if (any || migLevel.length) {
         setStmtViolations(perStmt)

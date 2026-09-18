@@ -4,6 +4,9 @@ import {
   emptyStatusCounts,
   registerMigrations,
   assertCanEditMigration,
+  assertMigrationRules,
+  normalizeValidationSections,
+  supportsServerValidation,
   assertNotTokenPrincipal,
   canEditMigration,
   canRelease,
@@ -14,6 +17,7 @@ import { HttpError, Router, type Ctx } from '../lib/http'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParams } from '../lib/paging'
 import { MULTI_STATEMENT_ERROR } from '../lib/sqlSyntax'
 import type { ApiTokenScope, MigrationStatus, SessionUser, UserRole } from '../types'
+import { rulesForEngine, type ValidationSection } from '../../src/lib/validationRules'
 
 const user = (role: UserRole, email = `${role}@myt.com`): SessionUser =>
   ({ id: `u_${role}`, email, name: role, picture: null, role })
@@ -246,6 +250,105 @@ describe('assertCanEditMigration', () => {
       expect(err.status).toBe(400)
       expect(err.message).toBe('title and queries are required.')
     }
+  })
+})
+
+// Creation and update both call assertMigrationRules after their existing syntax
+// and authorization checks. Keep ClickHouse coverage here, using the shared rule
+// catalog without a live database.
+describe('assertMigrationRules — ClickHouse create/update enforcement', () => {
+  const clickhouseRules = () => rulesForEngine('clickhouse')
+  const failure = (queries: string[], sections = clickhouseRules()): HttpError => {
+    try {
+      assertMigrationRules(queries, sections)
+    } catch (err) {
+      return err as HttpError
+    }
+    throw new Error('Expected validation failure')
+  }
+
+  test('rejects an OPTIMIZE FINAL create with the enabled ClickHouse rule', () => {
+    const err = failure(['OPTIMIZE TABLE events ON CLUSTER main FINAL'])
+    expect(err.status).toBe(400)
+    expect(err.message).toStartWith('Statement 1:')
+    expect(err.message).toContain('OPTIMIZE … FINAL')
+  })
+
+  test('rejects the same ClickHouse violation when replacing an existing migration SQL', () => {
+    const err = failure(['ALTER TABLE events ON CLUSTER main ADD COLUMN source String', 'OPTIMIZE TABLE events ON CLUSTER main FINAL'])
+    expect(err.status).toBe(400)
+    expect(err.message).toStartWith('Statement 2:')
+    expect(err.message).toContain('OPTIMIZE … FINAL')
+  })
+
+  test('honors stored disabled rules and keeps non-violating statements valid', () => {
+    const disabled = clickhouseRules().map((section) =>
+      section.id === 'performance'
+        ? { ...section, rules: section.rules.map((rule) => rule.id === 'ch-no-optimize-final' ? { ...rule, enabled: false } : rule) }
+        : section,
+    ) as ValidationSection[]
+    expect(() => assertMigrationRules(['OPTIMIZE TABLE events ON CLUSTER main FINAL'], disabled)).not.toThrow()
+    expect(() => assertMigrationRules(['ALTER TABLE events ON CLUSTER main ADD COLUMN source String'], clickhouseRules())).not.toThrow()
+  })
+})
+
+describe('assertMigrationRules — MySQL profile enforcement', () => {
+  test('enforces shared DROP safety on create/update inputs', () => {
+    const failure = (() => {
+      try {
+        assertMigrationRules(['DROP TABLE customers'], rulesForEngine('mysql'))
+      } catch (err) {
+        return err as HttpError
+      }
+      throw new Error('Expected validation failure')
+    })()
+    expect(failure.status).toBe(400)
+    expect(failure.message).toBe('Statement 1: Guard supported DROP with IF EXISTS: DROP statement is missing IF EXISTS.')
+  })
+
+  test('enforces the aggregate statement limit and accepts guarded MySQL DDL', () => {
+    const limited = rulesForEngine('mysql').map((section) =>
+      section.id === 'limits'
+        ? { ...section, rules: section.rules.map((rule) => rule.id === 'max-statements' ? { ...rule, currentValue: '1' } : rule) }
+        : section,
+    ) as ValidationSection[]
+    expect(() => assertMigrationRules(['SELECT 1', 'SELECT 2'], limited)).toThrow(
+      'Migration: Limit statements per migration: Migration has 2 statements (limit 1).',
+    )
+    expect(() => assertMigrationRules(['SELECT 1 -- first block', 'SELECT 2 -- second block'], limited)).toThrow(
+      'Migration: Limit statements per migration: Migration has 2 statements (limit 1).',
+    )
+    expect(() => assertMigrationRules(['DROP TABLE IF EXISTS old_customers'], rulesForEngine('mysql'))).not.toThrow()
+  })
+})
+
+describe('server validation engine coverage', () => {
+  test('covers only the exact Postgres, MySQL and ClickHouse catalog keys', () => {
+    for (const engine of ['postgres', 'mysql', 'clickhouse']) {
+      expect(supportsServerValidation(engine)).toBe(true)
+    }
+    for (const engine of ['aurora_postgres', 'alloydb', 'redshift', 'aurora_mysql', 'mariadb', 'tidb', 'starrocks', 'cassandra']) {
+      expect(supportsServerValidation(engine)).toBe(false)
+    }
+  })
+
+  test('enforces PostgreSQL DROP CASCADE safety through the shared catalog', () => {
+    expect(() => assertMigrationRules(['DROP TABLE IF EXISTS legacy_events CASCADE'], rulesForEngine('postgres'))).toThrow(
+      'Statement 1: Disallow DROP … CASCADE: DROP … CASCADE is not allowed in migrations.',
+    )
+    expect(() => assertMigrationRules(['DROP TABLE IF EXISTS legacy_events'], rulesForEngine('postgres'))).not.toThrow()
+  })
+})
+
+describe('normalizeValidationSections', () => {
+  test('decodes JSON-text settings before overlaying them on current defaults', () => {
+    const saved = JSON.stringify([
+      { id: 'safety', enabled: false, rules: [{ id: 'mysql-drop-if-exists', enabled: false }] },
+    ])
+    const sections = normalizeValidationSections(rulesForEngine('mysql'), saved)
+    const safety = sections.find((section) => section.id === 'safety')!
+    expect(safety.enabled).toBe(false)
+    expect(safety.rules.find((rule) => rule.id === 'mysql-drop-if-exists')?.enabled).toBe(false)
   })
 })
 
