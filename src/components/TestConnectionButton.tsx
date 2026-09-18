@@ -52,7 +52,7 @@ export function TestConnectionButton({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-start gap-2">
       <button
         type="button"
         onClick={test}
@@ -62,13 +62,13 @@ export function TestConnectionButton({
         <FaPlug size={10} /> {status.state === 'testing' ? 'Testing…' : 'Validate connection'}
       </button>
       {status.state === 'ok' ? (
-        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+        <span className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium text-emerald-600" role="status" aria-live="polite">
           <FaCheckCircle size={11} /> Connected ({status.latency} ms)
         </span>
       ) : null}
       {status.state === 'error' ? (
-        <span className="inline-flex items-center gap-1 truncate text-xs font-medium text-rose-600" title={status.message}>
-          <FaTimesCircle size={11} className="shrink-0" /> <span className="truncate">{status.message}</span>
+        <span className="flex min-w-0 flex-1 items-start gap-1 break-words text-xs font-medium leading-5 text-rose-600" role="status" aria-live="polite">
+          <FaTimesCircle size={11} className="mt-1 shrink-0" /> <span>{status.message}</span>
         </span>
       ) : null}
     </div>

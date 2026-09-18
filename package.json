@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-database-migration-service": "^3.926.0",
+    "@clickhouse/client": "^1.23.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "google-auth-library": "^10.9.0",
