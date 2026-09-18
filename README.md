@@ -139,9 +139,9 @@ bun run dev:server      # API + SPA on :3001 (watch mode)
 bun run typecheck:server
 ```
 
-Schema introspection, read queries, and migration apply connect to the managed
-(external) databases — implemented today for **MySQL-family** engines via
-`mysql2`; other engines return `501` until their drivers are added.
+Live external-database drivers are available for **MySQL-family** engines,
+Redis, Redshift, and ClickHouse (via `@clickhouse/client`). Supported operations
+vary by engine; unregistered engines return `501` until their drivers are added.
 
 > **First sign-in** bootstraps an admin (the first Google account). After that,
 > users must be invited. With `VITE_ORG` set, everyone joins that single org.

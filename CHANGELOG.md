@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-18
+
 ### Added
 
 - **Forked from link** — a migration created with the Fork button now records its
@@ -14,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows a "Forked from" row in Details linking back to it. `POST /api/migrations`
   accepts an optional `forked_from_id`. Forks created before this release have no
   link, since the relationship was not stored.
+- **Migration and audit-log pagination** — server-side pagination keeps long
+  migration lists and audit histories responsive, with navigation controls that
+  preserve the current filters.
+- **ClickHouse live access** — ClickHouse databases can now validate read and
+  write connections, pull schema metadata from `system.tables` and
+  `system.columns`, run read-only queries, and apply migrations. The driver uses
+  the ClickHouse HTTP interface and scopes schema discovery to the configured
+  database.
 
 ### Changed
 
@@ -24,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threshold, and any pending schedule is cancelled, so the author re-submits and
   approvers review the new statements. Applied and rejected migrations are still
   immutable (409).
+- **ClickHouse validation feedback** — connection failures from the Add database
+  and Edit connection dialogs are now shown in full, wrapping beside the
+  validation action so hosts and credentials can be corrected without losing the
+  useful error detail.
 
 ## [1.4.0] - 2026-09-15
 
@@ -212,7 +226,8 @@ shipping schema changes with review and governance built in.
 - **Platform** — Bun + React/TypeScript, schema auto-migration on boot,
   email/Slack notifications, and an audit log across all sensitive actions.
 
-[Unreleased]: https://github.com/myyogateacher/checkpoint/compare/1.4.0...HEAD
+[Unreleased]: https://github.com/myyogateacher/checkpoint/compare/1.5.0...HEAD
+[1.5.0]: https://github.com/myyogateacher/checkpoint/compare/1.4.0...1.5.0
 [1.4.0]: https://github.com/myyogateacher/checkpoint/compare/1.3.0...1.4.0
 [1.3.0]: https://github.com/myyogateacher/checkpoint/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/myyogateacher/checkpoint/compare/1.1.0...1.2.0

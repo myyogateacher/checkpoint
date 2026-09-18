@@ -42,7 +42,7 @@ import {
 } from './migrations'
 
 const SERVER_NAME = 'checkpoint'
-const SERVER_VERSION = '1.2.0'
+const SERVER_VERSION = '1.5.0'
 
 // What the request is allowed to do: the calling user plus the token's effective
 // scopes (already expanded by resolveApiToken).
