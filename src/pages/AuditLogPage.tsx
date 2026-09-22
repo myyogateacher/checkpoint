@@ -192,7 +192,14 @@ export function AuditLogPage() {
           ))}
         </div>
 
-        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {/* A native date input will not shrink below its min-content width (~134px for
+            dd/mm/yyyy plus the picker icon), so a pair of them needs ~276px or the
+            flex row overflows its cell and scrolls the whole page sideways. Hence
+            five columns rather than four, with the range spanning two, and the switch
+            at xl rather than lg: at 1024 the sidebar is still expanded and 2/5 of what
+            is left is 235px. Measured clean at 375, 414, 640, 768, 1024, 1180, 1280,
+            1366, 1440, 1600 and 1920. */}
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Field label="Actor">
             <Dropdown
               value={actor}
@@ -222,24 +229,26 @@ export function AuditLogPage() {
               menuMinWidth={240}
             />
           </Field>
-          <Field label="Date range">
-            <div className="flex items-center gap-2">
-              <TextInput
-                type="date"
-                aria-label="From date"
-                value={from}
-                max={to || undefined}
-                onChange={(e) => patchParams({ from: e.target.value || null, page: '1' })}
-              />
-              <TextInput
-                type="date"
-                aria-label="To date"
-                value={to}
-                min={from || undefined}
-                onChange={(e) => patchParams({ to: e.target.value || null, page: '1' })}
-              />
-            </div>
-          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Date range">
+              <div className="flex items-center gap-2">
+                <TextInput
+                  type="date"
+                  aria-label="From date"
+                  value={from}
+                  max={to || undefined}
+                  onChange={(e) => patchParams({ from: e.target.value || null, page: '1' })}
+                />
+                <TextInput
+                  type="date"
+                  aria-label="To date"
+                  value={to}
+                  min={from || undefined}
+                  onChange={(e) => patchParams({ to: e.target.value || null, page: '1' })}
+                />
+              </div>
+            </Field>
+          </div>
         </div>
 
         <div className="relative mb-4 max-w-sm">
