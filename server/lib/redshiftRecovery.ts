@@ -27,3 +27,26 @@ export function nextStrategy(history: RecoveryHistory | null, now: number, grace
   if (history.lastStrategy === 'reload') return 'schema_mismatch'
   return 'exhausted'
 }
+
+// Queued reloads, batched into the calls that will actually be made. ReloadTables takes
+// one schema and a list of tables, so a migration that broke three tables is one call.
+//
+// Keyed on migration AND schema, not migration alone. A migration's statements can name
+// two schemas, and folding them together would send one schema's table names under the
+// other's, which the API accepts and which then reloads nothing while reporting success.
+// That is the failure shape PROD-9445 was, so it does not get rebuilt here.
+//
+// The separator is NUL because it cannot appear in an identifier or an id, where a `|`
+// or a `.` can, and a key collision here silently merges two migrations' reloads.
+export function groupReloadsByTask<T extends { migration_id: string; schema_name: string }>(
+  rows: T[],
+): T[][] {
+  const groups = new Map<string, T[]>()
+  for (const row of rows) {
+    const key = `${row.migration_id}\u0000${row.schema_name}`
+    const existing = groups.get(key)
+    if (existing) existing.push(row)
+    else groups.set(key, [row])
+  }
+  return [...groups.values()]
+}

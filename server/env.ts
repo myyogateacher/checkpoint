@@ -64,6 +64,21 @@ export const env = {
     // whether the Redshift table is emptied or dropped for that window — set false
     // if that is not acceptable and reload by hand instead.
     autoReload: process.env.DMS_AUTO_RELOAD !== 'false',
+    // How long after an apply the reload is held back.
+    //
+    // PROD-9445: session's reload went out in the same second as its ALTER and rebuilt
+    // the Redshift table from the column definition DMS still held from before that
+    // ALTER, so the 5 SET members the ALTER added replicated as empty string for 24
+    // hours while the table reported "Table completed" throughout. DMS has to read the
+    // DDL off the binlog before a reload can build a correct target, and nothing in its
+    // API reports when that has happened, so waiting is the only lever there is.
+    //
+    // 15 is a guess with one real failure behind it, not a measured number. The value
+    // that matters is how long this task takes to see a DDL, which nobody has measured,
+    // which is exactly why it is configurable rather than a constant.
+    reloadDelayMinutes: Number.isFinite(Number(process.env.DMS_RELOAD_DELAY_MINUTES))
+      ? Number(process.env.DMS_RELOAD_DELAY_MINUTES)
+      : 15,
     // Channel for reload notifications; falls back to the org's Slack channel.
     slackChannel: (process.env.DMS_SLACK_CHANNEL ?? '').trim(),
     // Poll DMS for tables that fell out of the replica. On by default once a task

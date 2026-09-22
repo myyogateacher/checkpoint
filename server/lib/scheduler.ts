@@ -6,7 +6,7 @@
 //
 // Bun cron interprets schedules in UTC (the server already runs with TZ=UTC).
 
-import { dueScheduledMigrations, applyMigrationNow } from '../modules/migrations'
+import { dueScheduledMigrations, applyMigrationNow, runDueReloads } from '../modules/migrations'
 import { checkReplica } from '../modules/redshiftReplica'
 import { env, ORG_LOCKED } from '../env'
 
@@ -23,6 +23,21 @@ async function tick(): Promise<void> {
   if (ticking) return
   ticking = true
   try {
+    await applyDueMigrations()
+    // Its own pass, not folded into the one above: a DMS outage must not stop scheduled
+    // migrations from applying, and an apply that throws must not skip a reload that is
+    // already overdue. Run on this tick rather than the replica watch's because the
+    // delay is counted in minutes and that one fires every five.
+    await runDuePendingReloads()
+  } finally {
+    // Restored unconditionally: a tick that leaves this set drops the scheduler for the
+    // life of the process, with no log line to say so.
+    ticking = false
+  }
+}
+
+async function applyDueMigrations(): Promise<void> {
+  try {
     const due = await dueScheduledMigrations()
     for (const mig of due) {
       try {
@@ -36,8 +51,14 @@ async function tick(): Promise<void> {
     }
   } catch (err) {
     console.error(`[scheduler] poll failed: ${(err as Error).message}`)
-  } finally {
-    ticking = false
+  }
+}
+
+async function runDuePendingReloads(): Promise<void> {
+  try {
+    await runDueReloads()
+  } catch (err) {
+    console.error(`[dms] due reload pass failed: ${(err as Error).message}`)
   }
 }
 
