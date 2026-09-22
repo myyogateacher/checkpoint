@@ -14,10 +14,7 @@
     "noEmit": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "bun"]
   },
-  "include": ["src"],
-  // Tests run on bun and import `bun:test`, which this config has no types for.
-  // They are typechecked by tsconfig.server.json instead, alongside the server suite.
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src"]
 }
