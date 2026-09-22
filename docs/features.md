@@ -321,7 +321,7 @@ Slack) and designed to grow more sections.
 
 | Method | Path | Role | Notes |
 | --- | --- | --- | --- |
-| GET | `/api/audit-logs` | any (admin?) | newest-first system-wide log (capped at 500 rows). With `page` / `page_size` (1–100, default 25) returns `{ items, total, page, page_size, counts }`, filtered by `category` (`system` / `migration` / `manual`) and `q` (search over summary, actor, entity label, action) |
+| GET | `/api/audit-logs` | any (admin?) | newest-first system-wide log (capped at 500 rows). With `page` / `page_size` (1–100, default 25) returns `{ items, total, page, page_size, counts }`, filtered by `category` (`system` / `migration` / `manual`), `q` (search over summary, actor, entity label, action), `actor` (exact `actor_email`), `database` (database id), `environment` (environment **name**, matched across projects), and `from` / `to` (ISO instants; `from` inclusive, `to` exclusive, a non-date is a 400). `database` / `environment` resolve a row's database through its entity — direct for `database` rows, via `migrations.database_id` for `migration` rows — so rows with neither (project, user, api_token) are excluded by both. `counts` honors every filter except `category`. |
 
 `AuditLogEntry { id, actor_email, actor_name, action, entity_type, entity_id,
 entity_label, summary, created_at }`.

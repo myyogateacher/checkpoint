@@ -1,4 +1,4 @@
-import { type Router, type Ctx, json } from '../lib/http'
+import { type Router, type Ctx, badRequest, json } from '../lib/http'
 import { query, queryOne } from '../db/pool'
 import { requireUser, userOrgIds } from '../lib/auth'
 import { iso } from '../lib/serialize'
@@ -70,20 +70,75 @@ export function isAuditCategory(value: string | null | undefined): value is Audi
 export interface AuditFilters {
   category?: string | null
   q?: string | null
+  // actor_email exactly as stored — the client picks it from a list, never types it.
+  actor?: string | null
+  // Environment NAME, not id: environments are per-project, so "production"
+  // exists once per project and filtering by id would only ever match one of them.
+  environment?: string | null
+  database?: string | null
+  from?: Date | null
+  // Exclusive. The client sends the start of the day after the one the user picked,
+  // so the end date is fully included without depending on the column's precision.
+  to?: Date | null
 }
 
-// Scope to the user's orgs plus the optional category/search filters. Returns
-// null when the user belongs to no org (nothing to select).
+// audit_logs carries no database_id. A row names either a database directly
+// (entity_type = 'database') or a migration that is one hop from its database,
+// and the remaining entity types (project, user, api_token) have no database at
+// all — those rows get NULL here and drop out of both filters, which is right.
+// The join is added only when a database or environment filter is set, so every
+// other request keeps its single-table plan on the (org_id, created_at) index;
+// audit_logs only ever grows, so paying for the join unconditionally never gets
+// better. Each ON matches a primary key, so no row is duplicated and COUNT(*)
+// stays exact.
+const DATABASE_JOIN =
+  " LEFT JOIN migrations m ON a.entity_type = 'migration' AND m.id = a.entity_id" +
+  " LEFT JOIN `databases` d ON d.id = IF(a.entity_type = 'database', a.entity_id, m.database_id)"
+const ENVIRONMENT_JOIN = `${DATABASE_JOIN} LEFT JOIN environments e ON e.id = d.environment_id`
+
+// Scope to the user's orgs plus every optional filter the page offers: category,
+// search, actor, database, environment and the created_at range. Returns null when
+// the user belongs to no org (nothing to select).
 async function auditScope(
   userId: string,
   filters: AuditFilters,
   opts: { category?: boolean } = {},
-): Promise<{ where: string; params: unknown[] } | null> {
+): Promise<{ join: string; where: string; params: unknown[] } | null> {
   const orgs = await userOrgIds(userId)
   if (orgs.length === 0) return null
   const where = [`a.org_id IN (${orgs.map(() => '?').join(',')})`]
   const params: unknown[] = [...orgs]
+  let join = ''
   if (opts.category !== false && isAuditCategory(filters.category)) where.push(CATEGORY_SQL[filters.category])
+  if (filters.actor) {
+    where.push('a.actor_email = ?')
+    params.push(filters.actor)
+  }
+  if (filters.database) {
+    join = DATABASE_JOIN
+    where.push('d.id = ?')
+    params.push(filters.database)
+  }
+  if (filters.environment) {
+    // Superset of DATABASE_JOIN, so setting both filters still joins once.
+    join = ENVIRONMENT_JOIN
+    where.push('e.name = ?')
+    params.push(filters.environment)
+  }
+  // Bound as Date objects on purpose. created_at is a naive DATETIME, and mysql2
+  // (timezone 'local', the default) converts both ways in the process timezone,
+  // which package.json pins to TZ=UTC on every start script. So the same frame
+  // that iso() reads a row back out in is the one these bounds are written in.
+  // A pre-formatted string here would be a second frame, and a row the list
+  // renders inside the range could then be excluded by the range that selected it.
+  if (filters.from) {
+    where.push('a.created_at >= ?')
+    params.push(filters.from)
+  }
+  if (filters.to) {
+    where.push('a.created_at < ?')
+    params.push(filters.to)
+  }
   const q = filters.q?.trim()
   if (q) {
     // ESCAPE '\\' is a single backslash in SQL: a % or _ the user typed matches
@@ -94,7 +149,7 @@ async function auditScope(
     )
     params.push(...Array<string>(4).fill(likeTerm(q)))
   }
-  return { where: where.join(' AND '), params }
+  return { join, where: where.join(' AND '), params }
 }
 
 const AUDIT_COLUMNS =
@@ -108,7 +163,7 @@ export async function listAuditPage(
   const scope = await auditScope(userId, filters)
   if (!scope) return []
   return query<AuditRow>(
-    `SELECT ${AUDIT_COLUMNS} FROM audit_logs a WHERE ${scope.where}
+    `SELECT ${AUDIT_COLUMNS} FROM audit_logs a${scope.join} WHERE ${scope.where}
       ORDER BY a.created_at DESC${limitClause(filters.limit, filters.offset)}`,
     scope.params,
   )
@@ -118,14 +173,15 @@ export async function countAuditEvents(userId: string, filters: AuditFilters = {
   const scope = await auditScope(userId, filters)
   if (!scope) return 0
   const row = await queryOne<{ n: number | string }>(
-    `SELECT COUNT(*) AS n FROM audit_logs a WHERE ${scope.where}`,
+    `SELECT COUNT(*) AS n FROM audit_logs a${scope.join} WHERE ${scope.where}`,
     scope.params,
   )
   return Number(row?.n ?? 0)
 }
 
-// Per-category counts honoring the search term but ignoring the category filter,
-// so the pills keep their counts while one category is selected.
+// Per-category counts honoring every filter except category, so the pills show what
+// the current actor/environment/database/date/search selection holds while one
+// category is selected.
 export async function auditCategoryCounts(userId: string, filters: AuditFilters = {}): Promise<AuditCategoryCounts> {
   const counts: AuditCategoryCounts = { all: 0, system: 0, migration: 0, manual: 0 }
   const scope = await auditScope(userId, filters, { category: false })
@@ -136,7 +192,7 @@ export async function auditCategoryCounts(userId: string, filters: AuditFilters 
             SUM(${CATEGORY_SQL.migration}) AS migration_n,
             SUM(${CATEGORY_SQL.manual}) AS manual_n,
             SUM(${CATEGORY_SQL.system}) AS system_n
-       FROM audit_logs a WHERE ${scope.where}`,
+       FROM audit_logs a${scope.join} WHERE ${scope.where}`,
     scope.params,
   )
   counts.all = Number(row?.all_n ?? 0)
@@ -144,6 +200,17 @@ export async function auditCategoryCounts(userId: string, filters: AuditFilters 
   counts.manual = Number(row?.manual_n ?? 0)
   counts.system = Number(row?.system_n ?? 0)
   return counts
+}
+
+// A range bound arrives as an absolute instant (the client turns the day the user
+// picked into one, in the viewer's zone). Garbage is a 400 rather than a silent
+// drop: showing an unfiltered page under a filled-in date field reads as "there
+// is nothing in that range", which is the opposite of what happened.
+function parseInstant(raw: string | null, field: string): Date | null {
+  if (!raw) return null
+  const at = new Date(raw)
+  if (Number.isNaN(at.getTime())) throw badRequest(`${field} must be an ISO date-time.`)
+  return at
 }
 
 // System-wide audit log, scoped to the user's organizations. With `page` /
@@ -157,7 +224,15 @@ export function registerAudit(router: Router) {
       const rows = await listAuditEvents(user.id)
       return json(rows.map(toAuditEvent))
     }
-    const filters = { category: ctx.query.get('category'), q: ctx.query.get('q') }
+    const filters: AuditFilters = {
+      category: ctx.query.get('category'),
+      q: ctx.query.get('q'),
+      actor: ctx.query.get('actor'),
+      environment: ctx.query.get('environment'),
+      database: ctx.query.get('database'),
+      from: parseInstant(ctx.query.get('from'), 'from'),
+      to: parseInstant(ctx.query.get('to'), 'to'),
+    }
     const { page, pageSize } = paging
     const [rows, total, counts] = await Promise.all([
       listAuditPage(user.id, { ...filters, limit: pageSize, offset: (page - 1) * pageSize }),
