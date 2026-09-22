@@ -76,7 +76,12 @@ export const env = {
     // 15 is a guess with one real failure behind it, not a measured number. The value
     // that matters is how long this task takes to see a DDL, which nobody has measured,
     // which is exactly why it is configurable rather than a constant.
-    reloadDelayMinutes: Number.isFinite(Number(process.env.DMS_RELOAD_DELAY_MINUTES))
+    //
+    // `> 0` rather than Number.isFinite, which is the shape the neighbouring settings use:
+    // Number('') and Number('  ') are both 0 and both finite, so an empty variable, the
+    // likeliest deployment mistake of the two, would have set a zero delay and quietly
+    // reinstated the race. One comparison rejects blank, whitespace, negative and NaN.
+    reloadDelayMinutes: Number(process.env.DMS_RELOAD_DELAY_MINUTES) > 0
       ? Number(process.env.DMS_RELOAD_DELAY_MINUTES)
       : 15,
     // Channel for reload notifications; falls back to the org's Slack channel.
