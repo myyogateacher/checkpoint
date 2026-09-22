@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { FaChevronRight, FaCodeBranch, FaDatabase, FaSearch, FaSync, FaUserShield } from 'react-icons/fa'
 import { api } from '../services/api'
-import type { AuditLogPage as AuditPage } from '../types'
-import { AUDIT_FILTERS, formatDate, type AuditCategory } from '../lib/format'
+import type { AuditLogPage as AuditPage, Database, Environment, ManagedUser } from '../types'
+import { AUDIT_FILTERS, formatDate, localMidnight, type AuditCategory } from '../lib/format'
 import { PageHeader } from '../components/PageHeader'
-import { Card, EmptyState, Spinner, TextInput } from '../components/ui'
+import { Dropdown } from '../components/Dropdown'
+import { Card, EmptyState, Field, Spinner, TextInput } from '../components/ui'
 import { Pagination } from '../components/Pagination'
 
 const ACTION_ICON: Record<string, React.ReactNode> = {
@@ -37,6 +38,11 @@ export function AuditLogPage() {
     ? (searchParams.get('category') as AuditCategory)
     : 'all'
   const q = searchParams.get('q') ?? ''
+  const actor = searchParams.get('actor') ?? ''
+  const environment = searchParams.get('env') ?? ''
+  const database = searchParams.get('db') ?? ''
+  const from = searchParams.get('from') ?? ''
+  const to = searchParams.get('to') ?? ''
   const page = Math.max(1, Number(searchParams.get('page')) || 1)
   const pageSize = readPageSize(searchParams.get('page_size'))
 
@@ -67,6 +73,23 @@ export function AuditLogPage() {
     return () => clearTimeout(timer)
   }, [queryInput, q, patchParams])
 
+  // The three pickers' options. All three endpoints are already scoped to the
+  // user's organizations, which is the same scope the audit list itself uses, so
+  // no option can point at rows the list would never return. Loaded once: they
+  // describe the workspace, not the current filter.
+  const [people, setPeople] = useState<ManagedUser[]>([])
+  const [environments, setEnvironments] = useState<Environment[]>([])
+  const [databases, setDatabases] = useState<Database[]>([])
+
+  useEffect(() => {
+    void (async () => {
+      const [users, envs, dbs] = await Promise.all([api.getUsers(), api.getAllEnvironments(), api.getDatabases()])
+      setPeople(users)
+      setEnvironments(envs)
+      setDatabases(dbs)
+    })()
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     setRefreshing(true)
@@ -74,6 +97,13 @@ export function AuditLogPage() {
       .getAuditLogsPage({
         category: category === 'all' ? undefined : category,
         q: q || undefined,
+        actor: actor || undefined,
+        environment: environment || undefined,
+        database: database || undefined,
+        from: from ? localMidnight(from) : undefined,
+        // Exclusive bound: the start of the day after the one picked, so the whole
+        // end day is inside the range.
+        to: to ? localMidnight(to, 1) : undefined,
         page,
         pageSize,
       })
@@ -86,10 +116,52 @@ export function AuditLogPage() {
     return () => {
       cancelled = true
     }
-  }, [category, q, page, pageSize])
+  }, [category, q, actor, environment, database, from, to, page, pageSize])
 
   const counts = data?.counts ?? { all: 0, system: 0, migration: 0, manual: 0 }
   const entries = data?.items ?? []
+
+  const envNameById = useMemo(
+    () => new Map(environments.map((e) => [e.id, e.name])),
+    [environments],
+  )
+
+  // Environments are per-project rows, so "production" exists once per project.
+  // The filter matches on name for that reason, and the picker offers each name once.
+  const environmentOptions = useMemo(
+    () => [
+      { value: '', label: 'All environments' },
+      ...[...new Set(environments.map((e) => e.name))]
+        .sort((a, b) => a.localeCompare(b))
+        .map((name) => ({ value: name, label: name })),
+    ],
+    [environments],
+  )
+
+  // Narrowed to the chosen environment so the two pickers cannot contradict each
+  // other. Selecting an environment clears the database below, mirroring the
+  // environment/database pair on CreateMigrationPage.
+  const databaseOptions = useMemo(() => {
+    const visible = environment
+      ? databases.filter((d) => envNameById.get(d.environment_id) === environment)
+      : databases
+    return [
+      { value: '', label: 'All databases' },
+      ...visible.map((d) => ({ value: d.id, label: d.name, hint: envNameById.get(d.environment_id) })),
+    ]
+  }, [databases, environment, envNameById])
+
+  const actorOptions = useMemo(
+    () => [
+      { value: '', label: 'All actors' },
+      // The value is the email because that is what audit_logs stores; the name is
+      // only a display label and is missing for accounts that never signed in.
+      ...people.map((u) => ({ value: u.email, label: u.name ?? u.email, hint: u.name ? u.email : undefined })),
+    ],
+    [people],
+  )
+
+  const hasSubFilter = !!(actor || environment || database || from || to)
 
   return (
     <>
@@ -120,6 +192,56 @@ export function AuditLogPage() {
           ))}
         </div>
 
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Actor">
+            <Dropdown
+              value={actor}
+              options={actorOptions}
+              onChange={(v) => patchParams({ actor: v || null, page: '1' })}
+              searchable
+              searchPlaceholder="Search people…"
+              menuMinWidth={240}
+            />
+          </Field>
+          <Field label="Environment">
+            <Dropdown
+              value={environment}
+              options={environmentOptions}
+              // The database picker is scoped to the environment, so a leftover
+              // database from the previous one would silently return nothing.
+              onChange={(v) => patchParams({ env: v || null, db: null, page: '1' })}
+            />
+          </Field>
+          <Field label="Database">
+            <Dropdown
+              value={database}
+              options={databaseOptions}
+              onChange={(v) => patchParams({ db: v || null, page: '1' })}
+              searchable={databases.length > 8}
+              searchPlaceholder="Search databases…"
+              menuMinWidth={240}
+            />
+          </Field>
+          <Field label="Date range">
+            <div className="flex items-center gap-2">
+              <TextInput
+                type="date"
+                aria-label="From date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => patchParams({ from: e.target.value || null, page: '1' })}
+              />
+              <TextInput
+                type="date"
+                aria-label="To date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => patchParams({ to: e.target.value || null, page: '1' })}
+              />
+            </div>
+          </Field>
+        </div>
+
         <div className="relative mb-4 max-w-sm">
           <FaSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
           <TextInput
@@ -129,6 +251,15 @@ export function AuditLogPage() {
             className="pl-9"
           />
         </div>
+
+        {hasSubFilter ? (
+          <button
+            onClick={() => patchParams({ actor: null, env: null, db: null, from: null, to: null, page: '1' })}
+            className="mb-4 cursor-pointer text-xs font-medium text-indigo-600 hover:underline"
+          >
+            Clear filters
+          </button>
+        ) : null}
 
         {data === null ? (
           <Spinner />

@@ -12,6 +12,18 @@ export function formatDate(iso: string | null): string {
   })
 }
 
+// A `YYYY-MM-DD` from <input type="date">, plus n days, as the absolute instant of
+// midnight in the viewer's zone. Rows are rendered with formatDate(), which is also
+// viewer-local, so a range built from this selects exactly the rows the list labels
+// with those dates. Built with the Date constructor rather than by adding
+// 86_400_000 ms, so a DST change inside the range does not move the boundary by an
+// hour, and so the +1 day the exclusive end bound needs rolls the month over itself.
+export function localMidnight(ymd: string, plusDays = 0): string | undefined {
+  const [y, m, d] = ymd.split('-').map(Number)
+  if (!y || !m || !d) return undefined
+  return new Date(y, m - 1, d + plusDays).toISOString()
+}
+
 export function relativeTime(iso: string | null): string {
   if (!iso) return 'never'
   const diff = Date.now() - new Date(iso).getTime()
