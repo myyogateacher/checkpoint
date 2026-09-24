@@ -9,7 +9,7 @@ import { applyStatements } from '../lib/externalDb'
 import { notifyMigration, notifyOrg } from '../lib/slack'
 import { reloadTables } from '../lib/dms'
 import { recordAttempt } from './redshiftReplica'
-import { groupReloadsByTask, reloadAuditEntry, type ReloadOutcome } from '../lib/redshiftRecovery'
+import { groupReloadsByTask } from '../lib/redshiftRecovery'
 // Shared with the client so the notice shown on the form and the reload done here
 // can never disagree about which DDL breaks the replica.
 import { redshiftReloadTables } from '../../src/lib/redshiftReload'
@@ -229,7 +229,6 @@ async function queueRedshiftReloadAfterApply(
 
   if (!env.dms.autoReload) {
     await addEvent(mig.id, actorEmail, 'redshift reload needed', `Auto-reload is off, so someone has to reload these by hand in DMS: ${list}`)
-    await auditReload({ outcome: 'needed', migrationId: mig.id, title: mig.title, orgId: mig.org_id, dbName: mig.db_name, actorEmail, tables, detail: 'auto-reload is off, so these need a manual reload in DMS' })
     await notifyOrg(mig.org_id, `:large_orange_circle: *Redshift reload needed* after \`${mig.title}\` on ${mig.db_name}\n${why}\nAuto-reload is off, so these tables stay stale until someone reloads them.`, channel)
     return
   }
@@ -252,50 +251,13 @@ async function queueRedshiftReloadAfterApply(
       )
     }
     await addEvent(mig.id, actorEmail, 'redshift reload queued', `DMS reload scheduled for ${list}, running in ${delayMinutes} min once DMS has picked up this schema change.`)
-    await auditReload({ outcome: 'queued', migrationId: mig.id, title: mig.title, orgId: mig.org_id, dbName: mig.db_name, actorEmail, tables, detail: `runs in ${delayMinutes} min` })
     await notifyOrg(mig.org_id, `:hourglass_flowing_sand: *Redshift reload scheduled* after \`${mig.title}\` on ${mig.db_name}\n${why}\nThe reload runs in ${delayMinutes} min, once DMS has picked up the schema change. These tables read stale until it finishes.`, channel)
   } catch (err) {
     const message = (err as Error).message
     console.error(`[dms] queueing reload after migration ${mig.id} failed: ${message}`)
     await addEvent(mig.id, actorEmail, 'redshift reload failed', message)
-    await auditReload({ outcome: 'failed', migrationId: mig.id, title: mig.title, orgId: mig.org_id, dbName: mig.db_name, actorEmail, tables, detail: `nothing was queued: ${message}` })
     await notifyOrg(mig.org_id, `:red_circle: *Redshift reload not scheduled* after \`${mig.title}\` on ${mig.db_name}\n${why}\nNothing was queued, so these tables stay stale until someone reloads them by hand.\n\`\`\`${message}\`\`\``, channel)
   }
-}
-
-// Both reload paths write the same audit row, differing only in the outcome, the
-// actor, and which query's row carries the migration's fields. One writer so the
-// entity_type / entity_label pair cannot drift apart between the two, which is what
-// decides whether the entry deep-links to its migration and whether the audit
-// search can find it by title.
-//
-// Unguarded on purpose, like the addEvent calls beside it: both paths already
-// promise never to throw, and applyMigrationNow wraps the queueing one again.
-// A second try/catch here would only hide a write failure from those guards.
-async function auditReload(opts: {
-  outcome: ReloadOutcome
-  migrationId: string
-  title: string
-  orgId: string
-  dbName: string
-  actorEmail: string
-  tables: string[]
-  detail?: string
-}): Promise<void> {
-  const { action, summary } = reloadAuditEntry(opts.outcome, {
-    tables: opts.tables,
-    dbName: opts.dbName,
-    detail: opts.detail,
-  })
-  await writeAudit({
-    actor: { email: opts.actorEmail, name: opts.actorEmail },
-    orgId: opts.orgId,
-    action,
-    entityType: 'migration',
-    entityId: opts.migrationId,
-    entityLabel: opts.title,
-    summary,
-  })
 }
 
 // The audit trail renders every entry as "<action> by <actor>", so a machine action
@@ -355,7 +317,6 @@ export async function runDueReloads(): Promise<void> {
       // every minute would post the same alarm sixty times an hour. Someone has to look.
       for (const r of rows) await markReloadDone(r.id)
       await addEvent(head.migration_id, RELOAD_ACTOR, 'redshift reload failed', message)
-      await auditReload({ outcome: 'failed', migrationId: head.migration_id, title: head.title, orgId: head.org_id, dbName: head.db_name, actorEmail: RELOAD_ACTOR, tables, detail: message })
       await notifyOrg(head.org_id, `:red_circle: *Redshift reload failed* for \`${head.title}\` on ${head.db_name}\n${list} stay stale and need a manual reload.\n\`\`\`${message}\`\`\``, channel)
       continue
     }
@@ -368,7 +329,6 @@ export async function runDueReloads(): Promise<void> {
     // one is a warehouse that stays silently wrong, which is what PROD-9445 was.
     for (const r of rows) await markReloadDone(r.id)
     await addEvent(head.migration_id, RELOAD_ACTOR, 'redshift reload sent', `DMS accepted a reload for ${list} and runs it in the background.`)
-    await auditReload({ outcome: 'sent', migrationId: head.migration_id, title: head.title, orgId: head.org_id, dbName: head.db_name, actorEmail: RELOAD_ACTOR, tables })
     const why = rows.map((r) => `• ${r.table_name} — ${r.reason}`).join('\n')
     await notifyOrg(head.org_id, `:arrows_counterclockwise: *Redshift reload started* for \`${head.title}\` on ${head.db_name}\n${why}\nThese tables read incomplete until the load finishes.`, channel)
   }
@@ -403,9 +363,9 @@ export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl
   }
   await execute('UPDATE migrations SET status = :s, applied_at = NOW(), scheduled_for = NULL, scheduled_by = NULL WHERE id = :id', { s: 'applied', id: mig.id })
   await addEvent(mig.id, actorEmail, 'apply', null)
-  await writeAudit({ actor: { email: actorEmail, name: actorEmail }, orgId: mig.org_id, action: 'migration.apply', entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `Apply migration on ${mig.db_name}` })
+  await writeAudit({ actor: { email: actorEmail, name: actorEmail } as SessionUser, orgId: mig.org_id, action: 'migration.apply', entityType: 'migration', entityId: mig.id, entityLabel: mig.title, summary: `Apply migration on ${mig.db_name}` })
   await notifyMigration(mig.org_id, 'apply', mig.id, actorEmail, baseUrl)
-  // Guarded twice over: queueRedshiftReloadAfterApply swallows its own errors, and this
+  // Guarded twice over: reloadRedshiftAfterApply swallows its own errors, and this
   // catch covers anything unexpected. The migration is applied either way.
   try {
     await queueRedshiftReloadAfterApply(mig, conn.database, stmts, actorEmail)

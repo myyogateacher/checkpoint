@@ -331,9 +331,7 @@ entity_label, summary, created_at }`.
   server mirrors these rules in SQL (`CATEGORY_SQL` in
   [`server/modules/audit.ts`](../server/modules/audit.ts)) for the `category`
   filter and the pill counts; keep the two in step:
-  - `migration.*` → *Migration changes* (created/submitted/approved/rejected/applied,
-    plus `migration.redshift_reload_*` for the DMS reload a migration triggers: the
-    reload is a migration's fallout, so it files with the migration, not under System)
+  - `migration.*` → *Migration changes* (created/submitted/approved/rejected/applied)
   - `schema.*`, `query.*` → *Manual actions* (e.g. `schema.sync`, `query.read`)
   - everything else (`user.*`, `role.*`, `connection.*`, …) → *System changes*
 - **Keep the `entity.verb` naming convention** (e.g. `migration.apply`,

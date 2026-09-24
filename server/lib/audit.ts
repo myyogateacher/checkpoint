@@ -1,16 +1,11 @@
 import { execute } from '../db/pool'
 import { newId } from './ids'
+import type { SessionUser } from '../types'
 
 // Append an immutable audit entry. `action` follows the `entity.verb` convention
 // the client uses to categorize the audit log (e.g. migration.apply, query.read).
-//
-// `actor` is the two fields this writes, not a SessionUser, because half the callers
-// are machine actors with no session: a scheduled apply carries the queueing user's
-// address, a DMS reload carries 'checkpoint'. Typing it as SessionUser made those
-// callers cast an object missing id, picture and role, which is a lie the compiler
-// then has to be told to ignore. A real SessionUser still satisfies this.
 export async function writeAudit(opts: {
-  actor: { email: string; name: string | null }
+  actor: SessionUser
   orgId: string | null
   action: string
   entityType: string

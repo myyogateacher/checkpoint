@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { groupReloadsByTask, nextStrategy, reloadAuditEntry, type RecoveryHistory } from './redshiftRecovery'
+import { groupReloadsByTask, nextStrategy, type RecoveryHistory } from './redshiftRecovery'
 
 const NOW = 1_757_500_000_000
 const GRACE = 30 * 60_000
@@ -67,51 +67,5 @@ describe('groupReloadsByTask', () => {
 
   test('nothing due is no calls', () => {
     expect(groupReloadsByTask([])).toEqual([])
-  })
-})
-
-describe('reloadAuditEntry', () => {
-  const opts = { tables: ['session', 'recording_overrides'], dbName: 'myt' }
-
-  test('every outcome is a migration.* action, so the audit category is Migration changes', () => {
-    // CATEGORY_SQL files anything outside migration.*/schema.*/query.* under System
-    // changes. A reload landing there is the bug this function exists to avoid: it is
-    // a migration's fallout, and that is where someone goes looking for it.
-    for (const outcome of ['needed', 'queued', 'sent', 'failed'] as const) {
-      expect(reloadAuditEntry(outcome, opts).action.startsWith('migration.')).toBe(true)
-    }
-  })
-
-  test('each outcome gets its own action, so the four are distinguishable in the log', () => {
-    const actions = (['needed', 'queued', 'sent', 'failed'] as const).map((o) => reloadAuditEntry(o, opts).action)
-    expect(new Set(actions).size).toBe(4)
-    expect(actions).toEqual([
-      'migration.redshift_reload_needed',
-      'migration.redshift_reload_queued',
-      'migration.redshift_reload_sent',
-      'migration.redshift_reload_failed',
-    ])
-  })
-
-  test('the summary carries the word the audit search is run with', () => {
-    // The whole point: `/audit?q=redshift` was empty because no audit row anywhere
-    // contained the word. The search covers summary, so every outcome must.
-    for (const outcome of ['needed', 'queued', 'sent', 'failed'] as const) {
-      expect(reloadAuditEntry(outcome, opts).summary.toLowerCase()).toContain('redshift')
-    }
-  })
-
-  test('the summary names every table and the database', () => {
-    const { summary } = reloadAuditEntry('sent', opts)
-    expect(summary).toContain('session')
-    expect(summary).toContain('recording_overrides')
-    expect(summary).toContain('myt')
-  })
-
-  test('a detail is appended, and a blank one adds no trailing separator', () => {
-    expect(reloadAuditEntry('failed', { ...opts, detail: 'AccessDenied' }).summary).toContain('— AccessDenied')
-    for (const detail of [undefined, '', '   ']) {
-      expect(reloadAuditEntry('queued', { ...opts, detail }).summary.endsWith(`on ${opts.dbName}`)).toBe(true)
-    }
   })
 })
