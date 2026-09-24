@@ -57,7 +57,9 @@ export const env = {
     accessKeyId: (process.env.AWS_ACCESS_KEY_ID ?? '').trim(),
     secretAccessKey: (process.env.AWS_SECRET_ACCESS_KEY ?? '').trim(),
     // MySQL schema the task replicates. A migration triggers a reload only when its
-    // write connection points at this schema, so other databases are untouched.
+    // write connection points at this schema AND its database sits in the production
+    // environment (lib/dms.ts isReplicaSource). The schema alone is not enough:
+    // staging-mysql is also `myt`, and a staging apply reloaded prod (PROD-9520).
     sourceSchema: (process.env.DMS_SOURCE_SCHEMA ?? '').trim(),
     // On by default: a migration that breaks the replica should heal itself. A
     // reload re-runs the full load, and the task's TargetTablePrepMode decides
