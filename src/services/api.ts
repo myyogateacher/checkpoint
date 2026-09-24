@@ -321,12 +321,24 @@ export const api = {
   getAuditLogsPage(opts: {
     category?: AuditCategory
     q?: string
+    actor?: string
+    // Environment name, not id — see AuditFilters in server/modules/audit.ts.
+    environment?: string
+    database?: string
+    // Absolute instants: `from` inclusive, `to` exclusive.
+    from?: string
+    to?: string
     page: number
     pageSize: number
   }): Promise<AuditLogPage> {
     const params = new URLSearchParams()
     if (opts.category) params.set('category', opts.category)
     if (opts.q) params.set('q', opts.q)
+    if (opts.actor) params.set('actor', opts.actor)
+    if (opts.environment) params.set('environment', opts.environment)
+    if (opts.database) params.set('database', opts.database)
+    if (opts.from) params.set('from', opts.from)
+    if (opts.to) params.set('to', opts.to)
     params.set('page', String(opts.page))
     params.set('page_size', String(opts.pageSize))
     return request<AuditLogPage>(`/api/audit-logs?${params.toString()}`)

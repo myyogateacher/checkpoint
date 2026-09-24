@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.5.0",
   "type": "module",
-  "description": "Checkpoint \u2014 database migration assistant",
+  "description": "Checkpoint — database migration assistant",
   "scripts": {
     "dev": "concurrently -k -n client,server -c cyan,green \"bun run dev:client\" \"bun run dev:server\"",
     "dev:client": "vite",
@@ -13,7 +13,9 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "tsc -p tsconfig.server.json",
-    "test": "bun test server",
+    "test": "bun run test:unit && bun run test:ui",
+    "test:unit": "bun test server src/lib",
+    "test:ui": "bun test --preload ./src/test-setup.ts src/pages",
     "lint": "eslint .",
     "preview": "vite preview",
     "screenshots": "node scripts/screenshots.mjs"
@@ -36,7 +38,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^20.14.5",
     "@tailwindcss/vite": "^4.2.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/bun": "^1.3.14",
     "@types/node": "^24.4.0",
     "@types/pg": "^8.11.10",

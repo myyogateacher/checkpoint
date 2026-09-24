@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Audit log sub-filters** — the Audit Log page now filters by actor, environment,
+  database and a date range alongside the existing category pills and search. The
+  environment filter matches on environment *name*, so "production" covers every
+  project's production databases in one selection, and the database picker narrows
+  to the chosen environment. Date bounds are sent as absolute instants built from
+  the viewer's local day, so a range selects exactly the rows the list labels with
+  those dates. All filtering is server-side and the category counts follow the
+  current selection.
 - **Redshift reloads are in the audit log** — a DMS reload triggered by a migration
   now writes an audit entry as well as a migration-timeline event, for all four
   outcomes (needed, queued, sent, failed). Until now they were recorded only in

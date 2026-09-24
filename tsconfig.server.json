@@ -14,5 +14,10 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["server", "src/lib/validationRules.ts", "src/lib/engines.ts", "src/types.ts"]
+  "include": [
+    "server",
+    "src/lib/validationRules.ts",
+    "src/lib/engines.ts",
+    "src/types.ts"
+  ]
 }
