@@ -4,7 +4,7 @@ import { requireUser, requireCapability, can, userOrgIds, assertOrgMember } from
 import { newId } from '../lib/ids'
 import { iso, asJson } from '../lib/serialize'
 import { writeAudit } from '../lib/audit'
-import { getConnectionSecret, type ConnectionSecret } from './databases.repo'
+import { getConnectionSecret } from './databases.repo'
 import { applyStatements } from '../lib/externalDb'
 import { notifyMigration, notifyOrg } from '../lib/slack'
 import { isReplicaSource, reloadTables } from '../lib/dms'
@@ -67,6 +67,8 @@ interface MigRow {
   database_id: string
   db_name: string
   engine: string
+  // Name of the database's environment; the Redshift reload gate needs it.
+  env_name: string | null
   org_id: string
   title: string
   description: string | null
@@ -91,7 +93,7 @@ interface MigRow {
 // Governance is resolved per environment: a project_env_settings row for the
 // database's environment overrides the project-wide project_settings row.
 const MIG_SELECT = `
-  SELECT m.*, d.name AS db_name, d.engine, p.org_id,
+  SELECT m.*, d.name AS db_name, d.engine, e.name AS env_name, p.org_id,
          COALESCE(pes.approvers, ps.approvers) AS approvers,
          COALESCE(pes.releasers, ps.releasers) AS releasers,
          COALESCE(pes.required_approvals, ps.required_approvals) AS required_approvals,
@@ -100,6 +102,7 @@ const MIG_SELECT = `
   FROM migrations m
   JOIN \`databases\` d ON d.id = m.database_id
   JOIN projects p ON p.id = d.project_id
+  LEFT JOIN environments e ON e.id = d.environment_id
   LEFT JOIN migrations fm ON fm.id = m.forked_from_id
   LEFT JOIN \`databases\` fd ON fd.id = fm.database_id
   LEFT JOIN project_settings ps ON ps.project_id = p.id
@@ -214,15 +217,14 @@ export async function dueScheduledMigrations(): Promise<MigRow[]> {
 // problem must be recorded, not turned into a failed apply the caller might retry.
 async function queueRedshiftReloadAfterApply(
   mig: MigRow,
-  conn: Pick<ConnectionSecret, 'host' | 'database'>,
+  schema: string,
   statements: string[],
   actorEmail: string,
 ): Promise<void> {
-  // Host and schema together, not the schema alone: prod-mysql and staging-mysql are
-  // both `myt`, and a schema-only check here sent a staging apply's reload to the prod
-  // table (PROD-9520). Why the host is the right discriminator is on isReplicaSource.
-  if (!env.dms.taskArn || !isReplicaSource(conn, env.dms)) return
-  const schema = conn.database
+  // Schema and production environment together, not the schema alone: staging-mysql is
+  // also `myt`, and a schema-only check here sent a staging apply's reload to the prod
+  // table (PROD-9520). The reasoning behind the environment test is on isReplicaSource.
+  if (!env.dms.taskArn || !isReplicaSource({ schema, environmentName: mig.env_name }, env.dms.sourceSchema)) return
   const impacted = redshiftReloadTables(statements, mig.engine)
   if (impacted.length === 0) return
 
@@ -412,7 +414,7 @@ export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl
   // Guarded twice over: queueRedshiftReloadAfterApply swallows its own errors, and this
   // catch covers anything unexpected. The migration is applied either way.
   try {
-    await queueRedshiftReloadAfterApply(mig, conn, stmts, actorEmail)
+    await queueRedshiftReloadAfterApply(mig, conn.database, stmts, actorEmail)
   } catch (err) {
     console.error(`[dms] reload hook for migration ${mig.id} threw: ${(err as Error).message}`)
   }

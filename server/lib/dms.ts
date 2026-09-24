@@ -20,26 +20,36 @@ export function regionFromArn(arn: string): string | null {
   return parts.length > 3 && parts[3] ? parts[3] : null
 }
 
-// Whether a managed database's write connection is the MySQL this task replicates
-// from, and so whether DDL applied through it can break the Redshift copy.
+// Environment names are free text per project, but the model reserves this one:
+// docs/features.md lists production / staging / development, the add-database form
+// suggests "production", and the audit filter matches it by name. Case-insensitive
+// because the live catalog spells it "Production". "prod" is accepted because it is
+// the one abbreviation a renamed environment would plausibly carry, and a miss here
+// fails closed (no reload, no form notice) with nothing to alarm on.
+export function isProductionEnvironment(name: string | null | undefined): boolean {
+  const n = (name ?? '').trim().toLowerCase()
+  return n === 'production' || n === 'prod'
+}
+
+// Whether a managed database is the MySQL this task replicates from, and so whether
+// DDL applied through it can break the Redshift copy.
 //
-// Host AND schema, never schema alone. PROD-9520: prod-mysql and staging-mysql are
-// both schema `myt` and there is one task, so a schema-only match sent a staging
-// apply's reload to the prod table. The host is compared case-insensitively because
-// DNS is, and a connection form and a compose file are two places to type the same
-// name; the schema is compared exactly because MySQL on Linux does. An unset host or
-// schema matches nothing, never everything.
+// Schema AND production environment, never the schema alone. PROD-9520: prod-mysql and
+// staging-mysql are both schema `myt` and there is one task, so a schema-only match
+// sent a staging apply's reload to the prod table. The environment is the discriminator
+// because it is the one thing in Checkpoint's own model that says "this is prod", it
+// needs nothing configured outside the app, and a copy of prod keeps the schema name by
+// construction but is never filed under production. An unset schema matches nothing.
 //
 // Shared by the apply-time gate (modules/migrations.ts) and the catalog flag the
 // migration form reads (databases.repo.ts replicates_to_redshift), so the notice an
 // author sees and the reload that fires cannot disagree about which database counts.
 export function isReplicaSource(
-  conn: { host: string; database: string },
-  source: { sourceHost: string; sourceSchema: string },
+  db: { schema: string; environmentName: string | null },
+  sourceSchema: string,
 ): boolean {
-  if (!source.sourceHost || !source.sourceSchema) return false
-  return conn.host.trim().toLowerCase() === source.sourceHost.toLowerCase()
-    && conn.database === source.sourceSchema
+  if (!sourceSchema) return false
+  return db.schema === sourceSchema && isProductionEnvironment(db.environmentName)
 }
 
 let client: DatabaseMigrationServiceClient | null = null

@@ -6,19 +6,6 @@ function required(name: string): string {
   return v
 }
 
-// Read ahead of the object so the two can be checked against each other: a source
-// host is meaningless without a task, and a task is unsafe without a source host.
-const dmsTaskArn = (process.env.DMS_TASK_ARN ?? '').trim()
-const dmsSourceHost = (process.env.DMS_SOURCE_HOST ?? '').trim()
-if (dmsTaskArn && !dmsSourceHost) {
-  // Refused at boot rather than defaulted to "any host". PROD-9520: the reload gate
-  // matched on schema name alone, prod-mysql and staging-mysql are both `myt`, and a
-  // staging apply reloaded the prod Redshift table. A deploy that sets the task ARN
-  // but forgets this variable would quietly be that bug again, and nothing downstream
-  // would notice until the next staging apply carrying reload-worthy DDL.
-  throw new Error('DMS_SOURCE_HOST is required when DMS_TASK_ARN is set: the host of the MySQL the task replicates from.')
-}
-
 export const env = {
   port: Number(process.env.PORT ?? 3001),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -62,21 +49,17 @@ export const env = {
   // Credentials come from the standard AWS provider chain, never Checkpoint's store.
   dms: {
     // Full task ARN; its region is parsed out of the ARN itself.
-    taskArn: dmsTaskArn,
+    taskArn: (process.env.DMS_TASK_ARN ?? '').trim(),
     // Checkpoint does not run on EC2, so there is no instance role to fall back on
     // and these are the only credentials available. Passed to the SDK explicitly:
     // left to the default chain it would try the instance metadata endpoint and fail
     // with a timeout that says nothing about the real problem.
     accessKeyId: (process.env.AWS_ACCESS_KEY_ID ?? '').trim(),
     secretAccessKey: (process.env.AWS_SECRET_ACCESS_KEY ?? '').trim(),
-    // Host and schema of the MySQL the task replicates from, as Checkpoint's write
-    // connection for that database has them. A migration triggers a reload only when
-    // its write connection points at BOTH (lib/dms.ts isReplicaSource). The host is the
-    // discriminator, not the environment or the database id, because it is a property
-    // of the server rather than a label inside Checkpoint: renaming the database record
-    // or its environment cannot break it, and no second record can share it by accident
-    // the way two records share a schema name.
-    sourceHost: dmsSourceHost,
+    // MySQL schema the task replicates. A migration triggers a reload only when its
+    // write connection points at this schema AND its database sits in the production
+    // environment (lib/dms.ts isReplicaSource). The schema alone is not enough:
+    // staging-mysql is also `myt`, and a staging apply reloaded prod (PROD-9520).
     sourceSchema: (process.env.DMS_SOURCE_SCHEMA ?? '').trim(),
     // On by default: a migration that breaks the replica should heal itself. A
     // reload re-runs the full load, and the task's TargetTablePrepMode decides

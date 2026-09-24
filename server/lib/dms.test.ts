@@ -1,37 +1,48 @@
 import { describe, expect, test } from 'bun:test'
-import { isReplicaSource } from './dms'
+import { isProductionEnvironment, isReplicaSource } from './dms'
 
-// The two managed databases exactly as Checkpoint's catalog reported them on
-// 24 Sep 2026 (PROD-9520): the same schema on two hosts. Schema alone cannot tell
-// them apart, which is the whole reason the host is part of the test.
-const PROD = { host: 'myt-prod.privatelink.mysql.database.azure.com', database: 'myt' }
-const STAGING = { host: '164.52.210.111', database: 'myt' }
-const SOURCE = { sourceHost: PROD.host, sourceSchema: 'myt' }
+// The catalog exactly as Checkpoint reported it on 24 Sep 2026 (PROD-9520). Two
+// databases share the replicated schema and only the environment tells them apart,
+// which is the whole reason the environment is part of the test.
+const PROD_MYSQL = { schema: 'myt', environmentName: 'Production' }
+const STAGING_MYSQL = { schema: 'myt', environmentName: 'staging' }
+const PROD_CHAT = { schema: 'chat', environmentName: 'Production' }
 
 describe('isReplicaSource', () => {
-  test('the prod write connection is the source', () => {
-    expect(isReplicaSource(PROD, SOURCE)).toBe(true)
+  test('prod-mysql is the source', () => {
+    expect(isReplicaSource(PROD_MYSQL, 'myt')).toBe(true)
   })
 
-  test('staging, the same schema on another host, is not (PROD-9520)', () => {
-    expect(isReplicaSource(STAGING, SOURCE)).toBe(false)
+  test('staging-mysql, the same schema outside production, is not (PROD-9520)', () => {
+    expect(isReplicaSource(STAGING_MYSQL, 'myt')).toBe(false)
   })
 
-  test('another schema on the prod host is not', () => {
-    expect(isReplicaSource({ ...PROD, database: 'chat' }, SOURCE)).toBe(false)
+  test('prod-chat, production but another schema, is not', () => {
+    expect(isReplicaSource(PROD_CHAT, 'myt')).toBe(false)
   })
 
-  // An empty setting must fail closed. "Any host" is the pre-fix behaviour and "any
-  // schema" would reload tables the task does not carry.
-  test('an unset host or schema matches nothing, never everything', () => {
-    expect(isReplicaSource(PROD, { ...SOURCE, sourceHost: '' })).toBe(false)
-    expect(isReplicaSource(PROD, { ...SOURCE, sourceSchema: '' })).toBe(false)
+  // Empty must fail closed: "any schema" would reload tables the task does not carry.
+  test('an unset source schema matches nothing, never everything', () => {
+    expect(isReplicaSource(PROD_MYSQL, '')).toBe(false)
   })
 
-  // The host is typed twice, once in the connection form and once in compose, and
-  // DNS does not care about case; the schema is exact because MySQL on Linux is.
-  test('host case and whitespace are forgiven, schema case is not', () => {
-    expect(isReplicaSource({ ...PROD, host: ` ${PROD.host.toUpperCase()} ` }, SOURCE)).toBe(true)
-    expect(isReplicaSource({ ...PROD, database: 'MYT' }, SOURCE)).toBe(false)
+  // The environments join is LEFT, so a database whose environment row is gone
+  // arrives with null; it must not be treated as prod.
+  test('a database with no environment fails closed', () => {
+    expect(isReplicaSource({ schema: 'myt', environmentName: null }, 'myt')).toBe(false)
+  })
+})
+
+describe('isProductionEnvironment', () => {
+  test('matches the spellings a production environment carries', () => {
+    for (const name of ['production', 'Production', 'PRODUCTION', 'prod', ' production ']) {
+      expect(isProductionEnvironment(name)).toBe(true)
+    }
+  })
+
+  test('matches nothing else', () => {
+    for (const name of ['staging', 'development', '', null, undefined]) {
+      expect(isProductionEnvironment(name)).toBe(false)
+    }
   })
 })
