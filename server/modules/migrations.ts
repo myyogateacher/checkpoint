@@ -4,10 +4,10 @@ import { requireUser, requireCapability, can, userOrgIds, assertOrgMember } from
 import { newId } from '../lib/ids'
 import { iso, asJson } from '../lib/serialize'
 import { writeAudit } from '../lib/audit'
-import { getConnectionSecret } from './databases.repo'
+import { getConnectionSecret, type ConnectionSecret } from './databases.repo'
 import { applyStatements } from '../lib/externalDb'
 import { notifyMigration, notifyOrg } from '../lib/slack'
-import { reloadTables } from '../lib/dms'
+import { isReplicaSource, reloadTables } from '../lib/dms'
 import { recordAttempt } from './redshiftReplica'
 import { groupReloadsByTask, reloadAuditEntry, type ReloadOutcome } from '../lib/redshiftRecovery'
 // Shared with the client so the notice shown on the form and the reload done here
@@ -214,11 +214,15 @@ export async function dueScheduledMigrations(): Promise<MigRow[]> {
 // problem must be recorded, not turned into a failed apply the caller might retry.
 async function queueRedshiftReloadAfterApply(
   mig: MigRow,
-  schema: string,
+  conn: Pick<ConnectionSecret, 'host' | 'database'>,
   statements: string[],
   actorEmail: string,
 ): Promise<void> {
-  if (!env.dms.taskArn || !env.dms.sourceSchema || schema !== env.dms.sourceSchema) return
+  // Host and schema together, not the schema alone: prod-mysql and staging-mysql are
+  // both `myt`, and a schema-only check here sent a staging apply's reload to the prod
+  // table (PROD-9520). Why the host is the right discriminator is on isReplicaSource.
+  if (!env.dms.taskArn || !isReplicaSource(conn, env.dms)) return
+  const schema = conn.database
   const impacted = redshiftReloadTables(statements, mig.engine)
   if (impacted.length === 0) return
 
@@ -408,7 +412,7 @@ export async function applyMigrationNow(mig: MigRow, actorEmail: string, baseUrl
   // Guarded twice over: queueRedshiftReloadAfterApply swallows its own errors, and this
   // catch covers anything unexpected. The migration is applied either way.
   try {
-    await queueRedshiftReloadAfterApply(mig, conn.database, stmts, actorEmail)
+    await queueRedshiftReloadAfterApply(mig, conn, stmts, actorEmail)
   } catch (err) {
     console.error(`[dms] reload hook for migration ${mig.id} threw: ${(err as Error).message}`)
   }

@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   organization; ClickHouse `ON CLUSTER` checking is opt-in for distributed
   deployments.
 
+### Fixed
+
+- **A staging migration no longer reloads the prod Redshift table** — the post-apply
+  reload matched a database to the DMS task by schema name alone, and `prod-mysql`
+  and `staging-mysql` are both `myt`, so applying `sales task list v3` to staging on
+  24 Sep reloaded prod's `sales_task_list` (PROD-9520). The match now requires the
+  write connection's host as well, via the new `DMS_SOURCE_HOST`, which is required
+  whenever `DMS_TASK_ARN` is set: the server refuses to start without it rather than
+  fall back to the old behaviour. **Set it before deploying this version.** The same
+  test now drives the migration form's "needs a Redshift reload" notice, which was
+  also showing on staging databases.
+
 ## [1.5.0] - 2026-09-18
 
 ### Added

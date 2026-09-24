@@ -4,6 +4,7 @@ import { assertOrgMember } from '../lib/auth'
 import { asJson, bool, iso } from '../lib/serialize'
 import { decryptSecret } from '../lib/crypto'
 import { introspect } from '../lib/externalDb'
+import { isReplicaSource } from '../lib/dms'
 import { env } from '../env'
 
 export interface ConnectionSecret {
@@ -119,11 +120,12 @@ export async function serializeDb(row: DbRow) {
     write_connection: write ? serializeConn(write) : blank('write'),
     last_synced_at: iso(row.last_synced_at),
     table_count: Number(row.table_count),
-    // Drives the "needs a Redshift reload" notice on the migration form. True only
-    // for the one schema the DMS task replicates, so the notice never shows on a
-    // database it does not apply to.
+    // Drives the "needs a Redshift reload" notice on the migration form. The same
+    // test as the apply-time gate in modules/migrations.ts, so what the form promises
+    // and what the apply does agree; until PROD-9520 this matched on schema alone and
+    // showed the notice on staging-mysql, which does not feed the replica.
     replicates_to_redshift:
-      env.dms.sourceSchema.length > 0 && write?.db_name === env.dms.sourceSchema,
+      write !== undefined && isReplicaSource({ host: write.host, database: write.db_name }, env.dms),
     // Whether that reload happens on its own, or has to be done by hand.
     redshift_auto_reload: env.dms.autoReload,
   }

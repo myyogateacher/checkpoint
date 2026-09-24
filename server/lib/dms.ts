@@ -1,5 +1,6 @@
 // AWS DMS client for the MySQL -> Redshift replica: read per-table state, request a
-// reload. Why either is needed is in src/lib/redshiftReload.ts.
+// reload, and decide which managed database is the task's source. Why the first two
+// are needed is in src/lib/redshiftReload.ts.
 //
 // Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, not from
 // Checkpoint's own secret store. The key needs exactly two actions on the task,
@@ -17,6 +18,28 @@ import { env } from '../env'
 export function regionFromArn(arn: string): string | null {
   const parts = arn.split(':')
   return parts.length > 3 && parts[3] ? parts[3] : null
+}
+
+// Whether a managed database's write connection is the MySQL this task replicates
+// from, and so whether DDL applied through it can break the Redshift copy.
+//
+// Host AND schema, never schema alone. PROD-9520: prod-mysql and staging-mysql are
+// both schema `myt` and there is one task, so a schema-only match sent a staging
+// apply's reload to the prod table. The host is compared case-insensitively because
+// DNS is, and a connection form and a compose file are two places to type the same
+// name; the schema is compared exactly because MySQL on Linux does. An unset host or
+// schema matches nothing, never everything.
+//
+// Shared by the apply-time gate (modules/migrations.ts) and the catalog flag the
+// migration form reads (databases.repo.ts replicates_to_redshift), so the notice an
+// author sees and the reload that fires cannot disagree about which database counts.
+export function isReplicaSource(
+  conn: { host: string; database: string },
+  source: { sourceHost: string; sourceSchema: string },
+): boolean {
+  if (!source.sourceHost || !source.sourceSchema) return false
+  return conn.host.trim().toLowerCase() === source.sourceHost.toLowerCase()
+    && conn.database === source.sourceSchema
 }
 
 let client: DatabaseMigrationServiceClient | null = null
