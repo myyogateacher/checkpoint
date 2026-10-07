@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom'
 import { FaPlay } from 'react-icons/fa'
 import { ReadQueryPanel } from '../components/ReadQueryPanel'
 import { Card, EmptyState } from '../components/ui'
@@ -7,6 +8,8 @@ import { useDatabase } from './DatabaseLayout'
 
 export function QueryPage() {
   const database = useDatabase()
+  // A command handed over from the Schema tab's key browser.
+  const handoff = (useLocation().state as { sql?: string } | null)?.sql
   if (!engineSupportsQuery(database.engine)) {
     return (
       <Card className="p-6">
@@ -18,5 +21,12 @@ export function QueryPage() {
       </Card>
     )
   }
-  return <ReadQueryPanel databases={[database]} fixedDatabaseId={database.id} />
+  return (
+    <ReadQueryPanel
+      key={handoff ?? ''}
+      databases={[database]}
+      fixedDatabaseId={database.id}
+      initialQuery={handoff ? { databaseId: database.id, sql: handoff } : undefined}
+    />
+  )
 }

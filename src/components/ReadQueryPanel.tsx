@@ -3,11 +3,13 @@ import { FaColumns, FaDatabase, FaPencilAlt, FaPlay, FaPlus, FaSave, FaShareAlt,
 import { api } from '../services/api'
 import type { AppSettings, Database, Environment, Project, QueryResult } from '../types'
 import { ENGINE_LABELS } from '../lib/format'
-import { engineDialect, engineSupportsQuery, engineUsesSingleConnection } from '../lib/engines'
+import { engineDialect, engineHasKeyspace, engineSupportsQuery, engineUsesSingleConnection } from '../lib/engines'
 import { can } from '../lib/format'
 import { useAuth } from '../context/AuthContext'
 import { ConnectionBadge, EngineBadge } from './badges'
 import { SchemaExplorer } from './SchemaExplorer'
+import { KeyspaceExplorer } from './KeyspaceExplorer'
+import { redisReadCommand } from './KeyspaceTree'
 import { SaveQueryModal } from './SaveQueryModal'
 import { Button, Card, EmptyState, ErrorBanner, TextArea } from './ui'
 import { Dropdown } from './Dropdown'
@@ -29,7 +31,15 @@ interface QueryTab {
   view: ViewMode
 }
 
-function makeTab(n: number, fixedDatabaseId?: string): QueryTab {
+const DEFAULT_SQL = 'SELECT * FROM users LIMIT 50;'
+
+// SQL engines start with a sample statement; command stores (Redis) start empty
+// so the editor shows its placeholder instead of SQL.
+function defaultSql(db: Database | undefined): string {
+  return db && engineDialect(db.engine) === null ? '' : DEFAULT_SQL
+}
+
+function makeTab(n: number, fixedDatabaseId?: string, sql = DEFAULT_SQL): QueryTab {
   return {
     id: `tab_${n}_${Math.floor(performance.now())}`,
     name: `Query ${n}`,
@@ -37,7 +47,7 @@ function makeTab(n: number, fixedDatabaseId?: string): QueryTab {
     environmentId: '',
     databaseId: fixedDatabaseId ?? '',
     picking: !fixedDatabaseId,
-    sql: 'SELECT * FROM users LIMIT 50;',
+    sql,
     result: null,
     error: null,
     running: false,
@@ -64,7 +74,7 @@ export function ReadQueryPanel({
   const selectable = !fixedDatabaseId
   const counter = useRef(1)
   const [tabs, setTabs] = useState<QueryTab[]>(() => {
-    const t = makeTab(1, fixedDatabaseId)
+    const t = makeTab(1, fixedDatabaseId, defaultSql(databases.find((d) => d.id === fixedDatabaseId)))
     if (initialQuery) {
       const db = databases.find((d) => d.id === initialQuery.databaseId)
       return [
@@ -117,7 +127,7 @@ export function ReadQueryPanel({
 
   function addTab() {
     counter.current += 1
-    const t = makeTab(counter.current, fixedDatabaseId)
+    const t = makeTab(counter.current, fixedDatabaseId, defaultSql(databases.find((d) => d.id === fixedDatabaseId)))
     setTabs((prev) => [...prev, t])
     setActiveId(t.id)
   }
@@ -172,6 +182,11 @@ export function ReadQueryPanel({
             {activeDb ? (
               isSqlEngine ? (
                 <SchemaExplorer database={activeDb} onInsert={insertIdentifier} />
+              ) : engineHasKeyspace(activeDb.engine) ? (
+                <KeyspaceExplorer
+                  database={activeDb}
+                  onPickKey={(leaf) => patch(active.id, { sql: redisReadCommand(leaf) })}
+                />
               ) : (
                 <div className="flex h-full items-center justify-center p-4 text-center text-xs text-slate-400">
                   Schema browsing isn't available for {ENGINE_LABELS[activeDb.engine]}.
@@ -294,7 +309,12 @@ export function ReadQueryPanel({
                     placeholder={active.environmentId ? 'Database…' : '—'}
                     disabled={!active.environmentId}
                     options={envDatabases.map((d) => ({ value: d.id, label: `${d.name} · ${ENGINE_LABELS[d.engine]}` }))}
-                    onChange={(v) => patch(active.id, { databaseId: v, picking: false })}
+                    onChange={(v) => {
+                      // Swap the untouched starter text to suit the chosen engine.
+                      const untouched = active.sql === DEFAULT_SQL || active.sql === ''
+                      const sql = untouched ? defaultSql(databases.find((d) => d.id === v)) : active.sql
+                      patch(active.id, { databaseId: v, picking: false, sql })
+                    }}
                   />
                 </div>
               )

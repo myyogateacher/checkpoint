@@ -3,7 +3,7 @@ import net from 'node:net'
 import tls from 'node:tls'
 import { HttpError } from '../http'
 import type { ConnectionSecret } from '../../modules/databases.repo'
-import type { Driver, QueryResult } from './types'
+import type { Driver, KeyLeaf, KeyNode, Keyspace, QueryResult } from './types'
 
 // Read-only Redis commands permitted through the read panel. The first token of
 // the typed command must be in this set; everything that mutates state (SET,
@@ -166,15 +166,20 @@ function toResult(command: string, reply: unknown, duration_ms: number): QueryRe
   return { columns: ['value'], rows: [{ value: scalar(reply) }], row_count: 1, duration_ms }
 }
 
-async function execute(c: ConnectionSecret, text: string, timeoutMs: number): Promise<QueryResult> {
-  const [command, ...args] = tokenize(text.trim())
+async function connectClient(c: ConnectionSecret): Promise<RedisClient> {
   const client = makeClient(c)
   try {
     await client.connect()
+    return client
   } catch (err) {
     client.close()
     throw new HttpError(502, await diagnose(c, (err as Error).message))
   }
+}
+
+async function execute(c: ConnectionSecret, text: string, timeoutMs: number): Promise<QueryResult> {
+  const [command, ...args] = tokenize(text.trim())
+  const client = await connectClient(c)
   const started = Date.now()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -189,6 +194,107 @@ async function execute(c: ConnectionSecret, text: string, timeoutMs: number): Pr
     throw new HttpError(400, (err as Error).message)
   } finally {
     clearTimeout(timer)
+    client.close()
+  }
+}
+
+// Keyspace scan for the Schema tab: SCAN the whole keyspace once (on demand —
+// it's costly) and fold keys into a folder tree on `/`, `|` and `:`. Bounded by
+// key count and wall time; nodes keep a capped sample of subfolders and keys.
+const KEY_DELIMITERS = /([/|:])/
+const SCAN_MAX_KEYS = 2_000_000
+const SCAN_MAX_MS = 120_000
+const MAX_FOLDERS_PER_NODE = 500
+const MAX_KEYS_PER_NODE = 200
+const MAX_KEYS_TOTAL = 20_000
+
+interface BuildNode {
+  name: string
+  delimiter: string
+  prefix: string
+  count: number
+  folders: Map<string, BuildNode>
+  keys: Set<string>
+  moreKeys: number
+}
+
+const newNode = (name: string, delimiter: string, prefix: string): BuildNode =>
+  ({ name, delimiter, prefix, count: 0, folders: new Map(), keys: new Set(), moreKeys: 0 })
+
+async function scanKeyspace(c: ConnectionSecret): Promise<Keyspace> {
+  const client = await connectClient(c)
+  try {
+    const deadline = Date.now() + SCAN_MAX_MS
+    const root = newNode('', '', '')
+    let total = 0
+    let sampled = 0
+    let truncated = false
+    let cursor = '0'
+    do {
+      const reply = (await client.send('SCAN', [cursor, 'COUNT', '1000'])) as [unknown, unknown[]]
+      cursor = String(scalar(reply[0]))
+      for (const raw of reply[1] ?? []) {
+        const key = String(scalar(raw))
+        total++
+        // "a:b/c" → ['a', ':', 'b', '/', 'c']: folders a: and a:b/, leaf "c".
+        const parts = key.split(KEY_DELIMITERS)
+        let node = root
+        node.count++
+        let prefix = ''
+        for (let i = 0; i + 1 < parts.length; i += 2) {
+          prefix += parts[i] + parts[i + 1]
+          let child = node.folders.get(prefix)
+          if (!child) node.folders.set(prefix, (child = newNode(parts[i], parts[i + 1], prefix)))
+          child.count++
+          node = child
+        }
+        if (node.keys.size < MAX_KEYS_PER_NODE && sampled < MAX_KEYS_TOTAL) {
+          if (!node.keys.has(key)) sampled++
+          node.keys.add(key)
+        } else node.moreKeys++
+      }
+      if (cursor !== '0' && (total >= SCAN_MAX_KEYS || Date.now() > deadline)) {
+        truncated = true
+        break
+      }
+    } while (cursor !== '0')
+
+    // Prune to the per-node caps, then TYPE the sampled keys (pipelined in batches)
+    // so the UI can suggest the right read command.
+    const types = new Map<string, string | null>()
+    const finalize = (n: BuildNode): KeyNode => {
+      const folders = [...n.folders.values()].sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
+      const kept = folders.slice(0, MAX_FOLDERS_PER_NODE).sort((a, b) => a.prefix.localeCompare(b.prefix))
+      const keys = [...n.keys].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      keys.forEach((k) => types.set(k, null))
+      return {
+        name: n.name,
+        delimiter: n.delimiter,
+        prefix: n.prefix,
+        count: n.count,
+        folders: kept.map(finalize),
+        keys: keys.map((key): KeyLeaf => ({ key, type: null })),
+        more_folders: folders.length - kept.length,
+        more_keys: n.moreKeys,
+      }
+    }
+    const tree = finalize(root)
+    const all = [...types.keys()]
+    for (let i = 0; i < all.length; i += 1000) {
+      const batch = all.slice(i, i + 1000)
+      const res = await Promise.all(batch.map((k) => client.send('TYPE', [k]).then((t) => String(scalar(t)), () => null)))
+      batch.forEach((k, j) => types.set(k, res[j]))
+    }
+    const fill = (n: KeyNode) => {
+      n.keys.forEach((l) => (l.type = types.get(l.key) ?? null))
+      n.folders.forEach(fill)
+    }
+    fill(tree)
+    return { root: tree, total_keys: total, truncated }
+  } catch (err) {
+    if (err instanceof HttpError) throw err
+    throw new HttpError(400, (err as Error).message)
+  } finally {
     client.close()
   }
 }
@@ -224,6 +330,8 @@ export const redisDriver: Driver = {
     this.assertReadOnly(text)
     return execute(c, text, timeoutMs)
   },
+
+  scanKeyspace,
 
   async runCommand(c, text, timeoutMs) {
     const tokens = tokenize(text.trim())

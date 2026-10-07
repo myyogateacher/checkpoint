@@ -21,6 +21,8 @@ interface EngineMeta {
   // single connection (saved as both read & write) and the query panel isn't
   // limited to read-only commands for editors.
   singleConnection?: boolean
+  // No tables: the Schema tab browses a scanned keyspace as folders instead.
+  keyspace?: boolean
   color: ColorKey
 }
 
@@ -56,7 +58,7 @@ export const ENGINES: Record<DatabaseEngine, EngineMeta> = {
   elasticsearch: { label: 'Elasticsearch', category: 'analytics', defaultPort: 9200, dialect: null, query: true, migrations: false, color: 'teal' },
   // --- NoSQL ---
   mongodb: { label: 'MongoDB', category: 'nosql', defaultPort: 27017, dialect: null, query: false, migrations: false, color: 'emerald' },
-  redis: { label: 'Redis', category: 'nosql', defaultPort: 6379, dialect: null, query: true, migrations: false, singleConnection: true, color: 'rose' },
+  redis: { label: 'Redis', category: 'nosql', defaultPort: 6379, dialect: null, query: true, migrations: false, singleConnection: true, keyspace: true, color: 'rose' },
   cassandra: { label: 'Cassandra', category: 'nosql', defaultPort: 9042, dialect: 'sql', query: true, migrations: true, color: 'teal' },
   documentdb: { label: 'DocumentDB', category: 'nosql', defaultPort: 27017, dialect: null, query: false, migrations: false, color: 'emerald' },
   dynamodb: { label: 'DynamoDB', category: 'nosql', defaultPort: 443, dialect: null, query: true, migrations: false, color: 'blue' },
@@ -88,6 +90,9 @@ export function engineSupportsQuery(engine: DatabaseEngine): boolean {
 }
 export function engineUsesSingleConnection(engine: DatabaseEngine): boolean {
   return !!ENGINES[engine].singleConnection
+}
+export function engineHasKeyspace(engine: DatabaseEngine): boolean {
+  return !!ENGINES[engine].keyspace
 }
 export function engineSupportsMigrations(engine: DatabaseEngine): boolean {
   return ENGINES[engine].migrations

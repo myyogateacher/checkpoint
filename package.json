@@ -15,7 +15,7 @@
     "typecheck:server": "tsc -p tsconfig.server.json",
     "test": "bun run test:unit && bun run test:ui",
     "test:unit": "bun test server src/lib",
-    "test:ui": "bun test --preload ./src/test-setup.ts src/pages",
+    "test:ui": "bun test --preload ./src/test-setup.ts src/pages src/components",
     "lint": "eslint .",
     "preview": "vite preview",
     "screenshots": "node scripts/screenshots.mjs"
