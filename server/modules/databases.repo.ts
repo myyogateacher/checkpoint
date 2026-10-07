@@ -5,6 +5,7 @@ import { asJson, bool, iso } from '../lib/serialize'
 import { decryptSecret } from '../lib/crypto'
 import { introspect, scanKeyspace, supportsKeyspace } from '../lib/externalDb'
 import type { Keyspace } from '../lib/externalDb'
+import { isReplicaSource } from '../lib/dms'
 import { env } from '../env'
 
 export interface ConnectionSecret {
@@ -37,6 +38,8 @@ export interface DbRow {
   id: string
   project_id: string
   environment_id: string
+  // From the environments join in DB_SELECT; the Redshift reload flag reads it.
+  environment_name: string | null
   name: string
   engine: string
   tags: unknown
@@ -58,11 +61,12 @@ interface ConnRow {
 }
 
 export const DB_SELECT = `
-  SELECT d.*, p.org_id,
+  SELECT d.*, p.org_id, e.name AS environment_name,
     IF(JSON_TYPE(s.payload) = 'ARRAY', JSON_LENGTH(s.payload), 0) AS table_count,
     JSON_EXTRACT(s.payload, '$.keyspace.total_keys') AS key_count
   FROM \`databases\` d
   JOIN projects p ON p.id = d.project_id
+  LEFT JOIN environments e ON e.id = d.environment_id
   LEFT JOIN schema_snapshots s ON s.database_id = d.id`
 
 // Introspect the database via its read connection and cache the snapshot. Returns
@@ -126,11 +130,12 @@ export async function serializeDb(row: DbRow) {
     table_count: Number(row.table_count),
     // Keys in the last keyspace scan (Redis); null for table-based engines.
     key_count: row.key_count == null ? null : Number(row.key_count),
-    // Drives the "needs a Redshift reload" notice on the migration form. True only
-    // for the one schema the DMS task replicates, so the notice never shows on a
-    // database it does not apply to.
+    // Drives the "needs a Redshift reload" notice on the migration form. The same
+    // test as the apply-time gate in modules/migrations.ts, so what the form promises
+    // and what the apply does agree; until PROD-9520 this matched on schema alone and
+    // showed the notice on staging-mysql, which does not feed the replica.
     replicates_to_redshift:
-      env.dms.sourceSchema.length > 0 && write?.db_name === env.dms.sourceSchema,
+      write !== undefined && isReplicaSource({ schema: write.db_name, environmentName: row.environment_name }, env.dms.sourceSchema),
     // Whether that reload happens on its own, or has to be done by hand.
     redshift_auto_reload: env.dms.autoReload,
   }

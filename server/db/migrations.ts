@@ -150,4 +150,30 @@ export const MIGRATIONS: Migration[] = [
            FOREIGN KEY (forked_from_id) REFERENCES migrations(id) ON DELETE SET NULL`,
     ],
   },
+  {
+    version: 10,
+    name: 'dms_pending_reloads',
+    statements: [
+      // Reloads owed to the Redshift replica, held until their delay elapses.
+      //
+      // A row, not a setTimeout: the delay outlives a deploy, and Checkpoint is
+      // deployed often enough that an in-memory timer would silently drop the reload
+      // for exactly the migration that needed it. done_at leads the index because
+      // every read is "not done yet, and due", so the pending set stays a short
+      // prefix scan however many rows accumulate behind it.
+      `CREATE TABLE IF NOT EXISTS dms_pending_reloads (
+         id           VARCHAR(40)  NOT NULL,
+         migration_id VARCHAR(40)  NOT NULL,
+         schema_name  VARCHAR(128) NOT NULL,
+         table_name   VARCHAR(128) NOT NULL,
+         reason       TEXT         NOT NULL,
+         due_at       DATETIME     NOT NULL,
+         created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         done_at      DATETIME     DEFAULT NULL,
+         PRIMARY KEY (id),
+         KEY i_dms_pending_due (done_at, due_at),
+         FOREIGN KEY (migration_id) REFERENCES migrations(id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    ],
+  },
 ]

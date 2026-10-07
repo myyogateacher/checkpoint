@@ -57,13 +57,35 @@ export const env = {
     accessKeyId: (process.env.AWS_ACCESS_KEY_ID ?? '').trim(),
     secretAccessKey: (process.env.AWS_SECRET_ACCESS_KEY ?? '').trim(),
     // MySQL schema the task replicates. A migration triggers a reload only when its
-    // write connection points at this schema, so other databases are untouched.
+    // write connection points at this schema AND its database sits in the production
+    // environment (lib/dms.ts isReplicaSource). The schema alone is not enough:
+    // staging-mysql is also `myt`, and a staging apply reloaded prod (PROD-9520).
     sourceSchema: (process.env.DMS_SOURCE_SCHEMA ?? '').trim(),
     // On by default: a migration that breaks the replica should heal itself. A
     // reload re-runs the full load, and the task's TargetTablePrepMode decides
     // whether the Redshift table is emptied or dropped for that window — set false
     // if that is not acceptable and reload by hand instead.
     autoReload: process.env.DMS_AUTO_RELOAD !== 'false',
+    // How long after an apply the reload is held back.
+    //
+    // PROD-9445: session's reload went out in the same second as its ALTER and rebuilt
+    // the Redshift table from the column definition DMS still held from before that
+    // ALTER, so the 5 SET members the ALTER added replicated as empty string for 24
+    // hours while the table reported "Table completed" throughout. DMS has to read the
+    // DDL off the binlog before a reload can build a correct target, and nothing in its
+    // API reports when that has happened, so waiting is the only lever there is.
+    //
+    // 15 is a guess with one real failure behind it, not a measured number. The value
+    // that matters is how long this task takes to see a DDL, which nobody has measured,
+    // which is exactly why it is configurable rather than a constant.
+    //
+    // `> 0` rather than Number.isFinite, which is the shape the neighbouring settings use:
+    // Number('') and Number('  ') are both 0 and both finite, so an empty variable, the
+    // likeliest deployment mistake of the two, would have set a zero delay and quietly
+    // reinstated the race. One comparison rejects blank, whitespace, negative and NaN.
+    reloadDelayMinutes: Number(process.env.DMS_RELOAD_DELAY_MINUTES) > 0
+      ? Number(process.env.DMS_RELOAD_DELAY_MINUTES)
+      : 15,
     // Channel for reload notifications; falls back to the org's Slack channel.
     slackChannel: (process.env.DMS_SLACK_CHANNEL ?? '').trim(),
     // Poll DMS for tables that fell out of the replica. On by default once a task

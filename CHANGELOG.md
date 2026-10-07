@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the viewer's local day, so a range selects exactly the rows the list labels with
   those dates. All filtering is server-side and the category counts follow the
   current selection.
+- **Redshift reloads are in the audit log** — a DMS reload triggered by a migration
+  now writes an audit entry as well as a migration-timeline event, for all four
+  outcomes (needed, queued, sent, failed). Until now they were recorded only in
+  `migration_events` and Slack, so the audit log showed nothing for them and
+  searching it for "redshift" came back empty even on a day a reload had run. The
+  actions are named `migration.redshift_reload_*`, so they file under *Migration
+  changes* next to the apply that caused them.
 - **Server-enforced migration validation** — enabled, organization-specific
   validation rules for PostgreSQL, MySQL, and ClickHouse are now checked when a
   migration is created or edited. This applies equally to browser REST requests
@@ -24,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the form. MySQL online-DDL and charset checks remain configurable per
   organization; ClickHouse `ON CLUSTER` checking is opt-in for distributed
   deployments.
+
+### Fixed
+
+- **A staging migration no longer reloads the prod Redshift table** — the post-apply
+  reload matched a database to the DMS task by schema name alone, and `prod-mysql`
+  and `staging-mysql` are both `myt`, so applying `sales task list v3` to staging on
+  24 Sep reloaded prod's `sales_task_list` (PROD-9520). The match now also requires
+  the database to sit in the project's production environment (the environment named
+  `production`, case-insensitive). No new configuration. The same test drives the
+  migration form's "needs a Redshift reload" notice, which was also showing on
+  staging databases.
 
 ## [1.5.0] - 2026-09-18
 
