@@ -4,6 +4,7 @@ import { api } from '../services/api'
 import type { Connection } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { can } from '../lib/format'
+import { engineUsesSingleConnection } from '../lib/engines'
 import { notify } from '../lib/toast'
 import { ConnectionBadge } from '../components/badges'
 import { Button, Card, Field, Modal, TextInput } from '../components/ui'
@@ -16,6 +17,7 @@ export function ConnectionsPage() {
   const [read, setRead] = useState(database.read_connection)
   const [write, setWrite] = useState(database.write_connection)
   const [editing, setEditing] = useState<Connection | null>(null)
+  const single = engineUsesSingleConnection(database.engine)
 
   function onSaved(conn: Connection) {
     if (conn.mode === 'read') setRead(conn)
@@ -25,26 +27,42 @@ export function ConnectionsPage() {
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <ConnectionCard
-        connection={read}
-        editable={can(user?.role, 'manage_users')}
-        onEdit={() => setEditing(read)}
-        note="Used for the read panel and schema pulls. Admin-only to edit."
-      />
-      <ConnectionCard
-        connection={write}
-        editable={can(user?.role, 'manage_users')}
-        onEdit={() => setEditing(write)}
-        note="Used to apply approved migrations. Admin-only to edit."
-      />
+      {single ? (
+        <ConnectionCard
+          connection={write}
+          single
+          editable={can(user?.role, 'manage_users')}
+          onEdit={() => setEditing(write)}
+          note="One credential for reads and writes — used by the query panel. Admin-only to edit."
+        />
+      ) : (
+        <>
+          <ConnectionCard
+            connection={read}
+            editable={can(user?.role, 'manage_users')}
+            onEdit={() => setEditing(read)}
+            note="Used for the read panel and schema pulls. Admin-only to edit."
+          />
+          <ConnectionCard
+            connection={write}
+            editable={can(user?.role, 'manage_users')}
+            onEdit={() => setEditing(write)}
+            note="Used to apply approved migrations. Admin-only to edit."
+          />
+        </>
+      )}
 
       {editing ? (
         <ConnectionEditor
           databaseId={database.id}
           engine={database.engine}
           connection={editing}
+          single={single}
           onClose={() => setEditing(null)}
-          onSaved={onSaved}
+          onSaved={(conn) => {
+            if (single) setRead({ ...conn, mode: 'read' })
+            onSaved(conn)
+          }}
         />
       ) : null}
     </div>
@@ -53,11 +71,13 @@ export function ConnectionsPage() {
 
 function ConnectionCard({
   connection,
+  single = false,
   editable,
   onEdit,
   note,
 }: {
   connection: Connection
+  single?: boolean
   editable: boolean
   onEdit: () => void
   note: string
@@ -67,8 +87,17 @@ function ConnectionCard({
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <FaPlug className="text-slate-400" />
-          <h2 className="text-sm font-semibold capitalize text-slate-800">{connection.mode} connection</h2>
-          <ConnectionBadge mode={connection.mode} />
+          {single ? (
+            <>
+              <h2 className="text-sm font-semibold text-slate-800">Connection</h2>
+              <ConnectionBadge mode="read_write" />
+            </>
+          ) : (
+            <>
+              <h2 className="text-sm font-semibold capitalize text-slate-800">{connection.mode} connection</h2>
+              <ConnectionBadge mode={connection.mode} />
+            </>
+          )}
         </div>
         {editable ? (
           <Button variant="secondary" onClick={onEdit}>
@@ -80,9 +109,9 @@ function ConnectionCard({
       <dl className="space-y-2 text-sm">
         <Row label="Host" value={connection.host} mono />
         <Row label="Port" value={String(connection.port)} mono />
-        <Row label="Database" value={connection.database} mono />
-        <Row label="Username" value={connection.username} mono />
-        <Row label="SSL" value={connection.ssl ? 'Required' : 'Disabled'} />
+        <Row label={single ? 'DB index' : 'Database'} value={connection.database} mono />
+        <Row label="Username" value={connection.username || '—'} mono />
+        <Row label={single ? 'TLS' : 'SSL'} value={connection.ssl ? 'Required' : 'Disabled'} />
         <div className="flex items-center justify-between border-t border-slate-200/50 pt-2">
           <dt className="text-slate-500">Password</dt>
           <dd className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -112,12 +141,14 @@ function ConnectionEditor({
   databaseId,
   engine,
   connection,
+  single,
   onClose,
   onSaved,
 }: {
   databaseId: string
   engine: string
   connection: Connection
+  single: boolean
   onClose: () => void
   onSaved: (c: Connection) => void
 }) {
@@ -128,15 +159,11 @@ function ConnectionEditor({
   async function save() {
     setSaving(true)
     try {
-      const saved = await api.updateConnection(
-        databaseId,
-        {
-          ...form,
-          has_password: form.has_password || password.length > 0,
-        },
-        password || undefined,
-      )
-      notify.success(`${saved.mode === 'read' ? 'Read' : 'Write'} connection updated`)
+      const next = { ...form, has_password: form.has_password || password.length > 0 }
+      // A single read/write credential is stored as both connections; keep them in step.
+      if (single) await api.updateConnection(databaseId, { ...next, mode: 'read' }, password || undefined)
+      const saved = await api.updateConnection(databaseId, next, password || undefined)
+      notify.success(single ? 'Connection updated' : `${saved.mode === 'read' ? 'Read' : 'Write'} connection updated`)
       onSaved(saved)
     } catch (err) {
       notify.error(err instanceof Error ? err.message : 'Failed to update connection')
@@ -148,7 +175,7 @@ function ConnectionEditor({
   return (
     <Modal
       open
-      title={`Edit ${connection.mode} connection`}
+      title={single ? 'Edit connection' : `Edit ${connection.mode} connection`}
       onClose={onClose}
       footer={
         <>
@@ -172,10 +199,10 @@ function ConnectionEditor({
             onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
           />
         </Field>
-        <Field label="Database">
+        <Field label={single ? 'DB index' : 'Database'}>
           <TextInput value={form.database} onChange={(e) => setForm({ ...form, database: e.target.value })} />
         </Field>
-        <Field label="Username">
+        <Field label={single ? 'Username (optional)' : 'Username'}>
           <TextInput value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
         </Field>
       </div>
@@ -189,7 +216,7 @@ function ConnectionEditor({
           onChange={(e) => setForm({ ...form, ssl: e.target.checked })}
           className="h-4 w-4"
         />
-        Require SSL
+        {single ? 'Use TLS' : 'Require SSL'}
       </label>
       <div className="mt-3 border-t border-slate-200/50 pt-3">
         <TestConnectionButton

@@ -38,6 +38,11 @@ export interface Driver {
   // Run a read-only query and return tabular results. `timeoutMs` bounds how long
   // the statement may run before it is aborted.
   runReadQuery(c: ConnectionSecret, queryText: string, timeoutMs: number): Promise<QueryResult>
+  // Engines whose credentials are inherently read/write (Redis has no separate
+  // read-only user by default) implement this: the query panel then runs the
+  // command on the write connection instead of enforcing `assertReadOnly`.
+  // The driver still rejects commands that are unsafe from a panel.
+  runCommand?(c: ConnectionSecret, queryText: string, timeoutMs: number): Promise<QueryResult>
   // Apply ordered write statements (migrations). Omit for engines without DDL.
   applyStatements?(c: ConnectionSecret, statements: string[]): Promise<void>
 }

@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { FaCodeBranch, FaPlay, FaPlug, FaTable } from 'react-icons/fa'
 import type { DatabaseEngine } from '../types'
-import { engineSupportsMigrations, engineSupportsQuery } from '../lib/engines'
+import { engineSupportsMigrations, engineSupportsQuery, engineUsesSingleConnection } from '../lib/engines'
 
 const TABS = [
   { to: 'schema', label: 'Schema', icon: <FaTable size={12} />, cap: 'always' as const },
@@ -10,8 +10,8 @@ const TABS = [
   { to: 'connections', label: 'Connections', icon: <FaPlug size={12} />, cap: 'always' as const },
 ]
 
-// Tabs are gated by engine capability — e.g. a Redis database shows no Read
-// panel or Migrations tab.
+// Tabs are gated by engine capability — e.g. a Redis database shows no
+// Migrations tab.
 export function DatabaseTabs({ databaseId, engine }: { databaseId: string; engine: DatabaseEngine }) {
   const tabs = TABS.filter((t) =>
     t.cap === 'query' ? engineSupportsQuery(engine) : t.cap === 'migrations' ? engineSupportsMigrations(engine) : true,
@@ -29,7 +29,8 @@ export function DatabaseTabs({ databaseId, engine }: { databaseId: string; engin
           }
         >
           {tab.icon}
-          {tab.label}
+          {/* Read/write stores (Redis) get a "Query" tab rather than a read panel. */}
+          {tab.cap === 'query' && engineUsesSingleConnection(engine) ? 'Query' : tab.label}
         </NavLink>
       ))}
     </div>
