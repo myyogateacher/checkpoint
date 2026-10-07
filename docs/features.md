@@ -185,6 +185,11 @@ Introspection must produce, per table: `schema`, `name`, `estimated_rows`,
 - MySQL: `information_schema.{TABLES,COLUMNS,STATISTICS}`.
 - ClickHouse: `system.tables` / `system.columns`; "ORDER BY" surfaced as a
   pseudo-index. Writes an audit log entry (`schema.sync`).
+- Redis (no tables): sync SCANs the keyspace into `keyspace { root, total_keys,
+  truncated }` — a folder tree split on `/`, `|`, `:` with per-folder counts and
+  a capped, TYPE-annotated sample of keys. Stored as the snapshot payload
+  `{ keyspace }`; `tables` is empty. Costly, so it never runs automatically
+  (not even on create) — only on **Scan keys**.
 
 ---
 
@@ -193,6 +198,11 @@ Introspection must produce, per table: `schema`, `name`, `estimated_rows`,
 | Method | Path | Role | Notes |
 | --- | --- | --- | --- |
 | POST | `/api/databases/:id/query` | any | body `{ sql }`; runs on the **read** connection |
+
+Redis is the exception: its single credential is read/write, so for users with
+`edit` the command runs on the **write** connection with any command except a
+server-wide/blocking denylist (FLUSHALL, CONFIG, SUBSCRIBE…), audited as
+`query.run`. Other roles get the read-only command allowlist.
 
 **Read-only enforcement is a backend security requirement**, not just a UI
 nicety. The client pre-checks that statements start with

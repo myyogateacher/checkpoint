@@ -118,6 +118,8 @@ export interface Database {
   write_connection: Connection
   last_synced_at: string | null
   table_count: number
+  // Keys in the last keyspace scan (Redis); null for table-based engines.
+  key_count: number | null
   // True when this database is the MySQL source of the Redshift DMS replica, so
   // some DDL needs a table reload after apply.
   replicates_to_redshift: boolean
@@ -172,6 +174,30 @@ export interface SchemaSnapshot {
   database_id: string
   synced_at: string
   tables: TableDef[]
+  // Keyspace engines (Redis) snapshot their keys as a folder tree instead of tables.
+  keyspace?: Keyspace
+}
+
+// A Redis keyspace folded into folders on `/`, `|` and `:`. Counts cover every
+// scanned key; `folders`/`keys` are capped samples (`more_*` = left out).
+export interface KeyLeaf {
+  key: string
+  type: string | null
+}
+export interface KeyNode {
+  name: string
+  delimiter: string
+  prefix: string
+  count: number
+  folders: KeyNode[]
+  keys: KeyLeaf[]
+  more_folders: number
+  more_keys: number
+}
+export interface Keyspace {
+  root: KeyNode
+  total_keys: number
+  truncated: boolean
 }
 
 // --- Migrations -------------------------------------------------------------

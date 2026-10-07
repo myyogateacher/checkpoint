@@ -5,7 +5,7 @@ import { newId } from '../lib/ids'
 import { encryptSecret } from '../lib/crypto'
 import { writeAudit } from '../lib/audit'
 import { DB_SELECT, loadDb, serializeDb, getConnectionSecret, pullSchema, type DbRow } from './databases.repo'
-import { testConnection } from '../lib/externalDb'
+import { testConnection, supportsKeyspace } from '../lib/externalDb'
 import { HttpError } from '../lib/http'
 
 interface ConnInput {
@@ -84,7 +84,9 @@ export function registerDatabases(router: Router) {
 
     // Auto-pull the schema so tables show up right after adding, without a manual
     // sync. Best-effort: a bad/unreachable read connection must not fail the create.
+    // Keyspace scans (Redis) walk every key, so they only run when asked for.
     const created = await loadDb(user.id, id)
+    if (supportsKeyspace(body.engine)) return json(await serializeDb(created))
     try {
       const { tables } = await pullSchema(created)
       await writeAudit({ actor: user, orgId: org_id, action: 'schema.sync', entityType: 'database', entityId: id, entityLabel: body.name, summary: `Pulled schema from ${body.name} — ${tables.length} tables` })

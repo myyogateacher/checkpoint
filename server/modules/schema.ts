@@ -14,7 +14,10 @@ export async function getDatabaseSchema(userId: string, databaseId: string) {
     { id: databaseId },
   )
   if (!row) return null
-  return { database_id: databaseId, synced_at: iso(row.synced_at), tables: asJson(row.payload, []) }
+  // Table engines store an array of tables; keyspace engines (Redis) `{ keyspace }`.
+  const payload = asJson<unknown>(row.payload, [])
+  if (Array.isArray(payload)) return { database_id: databaseId, synced_at: iso(row.synced_at), tables: payload }
+  return { database_id: databaseId, synced_at: iso(row.synced_at), tables: [], keyspace: (payload as { keyspace?: unknown }).keyspace }
 }
 
 export function registerSchema(router: Router) {
@@ -29,8 +32,9 @@ export function registerSchema(router: Router) {
     const user = requireCapability(ctx, 'edit')
     const db = await loadDb(user.id, ctx.params.id)
 
-    const { tables, syncedAt } = await pullSchema(db)
-    await writeAudit({ actor: user, orgId: db.org_id, action: 'schema.sync', entityType: 'database', entityId: db.id, entityLabel: db.name, summary: `Pulled schema from ${db.name} — ${tables.length} tables` })
-    return json({ database_id: db.id, synced_at: syncedAt.toISOString(), tables })
+    const { tables, keyspace, syncedAt } = await pullSchema(db)
+    const what = keyspace ? `Scanned keys in ${db.name} — ${keyspace.total_keys} keys` : `Pulled schema from ${db.name} — ${tables.length} tables`
+    await writeAudit({ actor: user, orgId: db.org_id, action: 'schema.sync', entityType: 'database', entityId: db.id, entityLabel: db.name, summary: what })
+    return json({ database_id: db.id, synced_at: syncedAt.toISOString(), tables, ...(keyspace ? { keyspace } : {}) })
   })
 }

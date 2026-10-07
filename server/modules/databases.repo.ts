@@ -3,7 +3,8 @@ import { notFound, badRequest } from '../lib/http'
 import { assertOrgMember } from '../lib/auth'
 import { asJson, bool, iso } from '../lib/serialize'
 import { decryptSecret } from '../lib/crypto'
-import { introspect } from '../lib/externalDb'
+import { introspect, scanKeyspace, supportsKeyspace } from '../lib/externalDb'
+import type { Keyspace } from '../lib/externalDb'
 import { isReplicaSource } from '../lib/dms'
 import { env } from '../env'
 
@@ -45,6 +46,7 @@ export interface DbRow {
   last_synced_at: Date | null
   org_id: string
   table_count: number
+  key_count: number | null
 }
 
 interface ConnRow {
@@ -60,7 +62,8 @@ interface ConnRow {
 
 export const DB_SELECT = `
   SELECT d.*, p.org_id, e.name AS environment_name,
-    COALESCE(JSON_LENGTH(s.payload), 0) AS table_count
+    IF(JSON_TYPE(s.payload) = 'ARRAY', JSON_LENGTH(s.payload), 0) AS table_count,
+    JSON_EXTRACT(s.payload, '$.keyspace.total_keys') AS key_count
   FROM \`databases\` d
   JOIN projects p ON p.id = d.project_id
   LEFT JOIN environments e ON e.id = d.environment_id
@@ -70,18 +73,20 @@ export const DB_SELECT = `
 // the pulled tables + timestamp. Throws if no read connection exists or the pull
 // fails (callers decide whether that's fatal). The payload is a top-level JSON
 // array of tables — table_count above reads JSON_LENGTH(payload) accordingly.
-export async function pullSchema(db: DbRow): Promise<{ tables: Awaited<ReturnType<typeof introspect>>; syncedAt: Date }> {
+// Keyspace engines (Redis) store `{ keyspace }` instead, with no tables.
+export async function pullSchema(db: DbRow): Promise<{ tables: Awaited<ReturnType<typeof introspect>>; keyspace?: Keyspace; syncedAt: Date }> {
   const conn = await getConnectionSecret(db.id, 'read')
   if (!conn) throw badRequest('No read connection configured.')
-  const tables = await introspect(db.engine, conn)
+  const keyspace = supportsKeyspace(db.engine) ? await scanKeyspace(db.engine, conn) : undefined
+  const tables = keyspace ? [] : await introspect(db.engine, conn)
   const now = new Date()
   await execute(
     `INSERT INTO schema_snapshots (database_id, synced_at, payload) VALUES (:id, :at, :payload)
      ON DUPLICATE KEY UPDATE synced_at = :at, payload = :payload`,
-    { id: db.id, at: now, payload: JSON.stringify(tables) },
+    { id: db.id, at: now, payload: JSON.stringify(keyspace ? { keyspace } : tables) },
   )
   await execute('UPDATE `databases` SET last_synced_at = :at WHERE id = :id', { at: now, id: db.id })
-  return { tables, syncedAt: now }
+  return { tables, keyspace, syncedAt: now }
 }
 
 // Resolve a database the user may access (membership-checked).
@@ -123,6 +128,8 @@ export async function serializeDb(row: DbRow) {
     write_connection: write ? serializeConn(write) : blank('write'),
     last_synced_at: iso(row.last_synced_at),
     table_count: Number(row.table_count),
+    // Keys in the last keyspace scan (Redis); null for table-based engines.
+    key_count: row.key_count == null ? null : Number(row.key_count),
     // Drives the "needs a Redshift reload" notice on the migration form. The same
     // test as the apply-time gate in modules/migrations.ts, so what the form promises
     // and what the apply does agree; until PROD-9520 this matched on schema alone and

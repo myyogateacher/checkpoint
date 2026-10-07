@@ -1,9 +1,9 @@
 import { HttpError } from './http'
 import type { ConnectionSecret } from '../modules/databases.repo'
 import { getDriver } from './drivers'
-import type { QueryResult, TableDef } from './drivers/types'
+import type { Keyspace, QueryResult, TableDef } from './drivers/types'
 
-export type { QueryResult, TableDef } from './drivers/types'
+export type { Keyspace, QueryResult, TableDef } from './drivers/types'
 
 // Thin facade over the per-engine driver registry (server/lib/drivers). Each
 // function resolves the engine's driver and delegates; engines without a driver
@@ -48,6 +48,17 @@ export function runCommand(engine: string, c: ConnectionSecret, queryText: strin
   const d = driverOrThrow(engine)
   if (!d.runCommand) throw new HttpError(400, `${engine} only supports read-only queries.`)
   return d.runCommand(c, queryText, timeoutMs)
+}
+
+// Engines without tables (Redis) expose their keyspace as the "schema".
+export function supportsKeyspace(engine: string): boolean {
+  return !!getDriver(engine)?.scanKeyspace
+}
+
+export function scanKeyspace(engine: string, c: ConnectionSecret): Promise<Keyspace> {
+  const d = driverOrThrow(engine)
+  if (!d.scanKeyspace) throw new HttpError(400, `${engine} does not support key browsing.`)
+  return d.scanKeyspace(c)
 }
 
 export function applyStatements(engine: string, c: ConnectionSecret, statements: string[]): Promise<void> {

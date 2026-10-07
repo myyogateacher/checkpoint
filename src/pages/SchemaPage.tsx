@@ -1,15 +1,113 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { FaChevronDown, FaChevronRight, FaKey, FaSearch, FaSync, FaTable } from 'react-icons/fa'
+import { useNavigate } from 'react-router-dom'
+import { FaChevronDown, FaChevronRight, FaExclamationTriangle, FaFolder, FaKey, FaSearch, FaSync, FaTable } from 'react-icons/fa'
 import { api } from '../services/api'
-import type { ColumnDef, SchemaSnapshot, TableDef } from '../types'
+import type { ColumnDef, Database, SchemaSnapshot, TableDef } from '../types'
 import { useAuth } from '../context/AuthContext'
 import { can, formatRows, relativeTime } from '../lib/format'
 import { notify } from '../lib/toast'
 import { Button, Card, EmptyState, Spinner, TextInput } from '../components/ui'
 import { Highlight } from '../components/Highlight'
-import { useDatabase } from './DatabaseLayout'
+import { KeyspaceTree, redisReadCommand } from '../components/KeyspaceTree'
+import { engineHasKeyspace } from '../lib/engines'
+import { useDatabase, useRefreshDatabase } from './DatabaseLayout'
 
 export function SchemaPage() {
+  const database = useDatabase()
+  if (engineHasKeyspace(database.engine)) return <KeyspacePage database={database} />
+  return <TableSchemaPage />
+}
+
+// Redis: the "schema" is the keyspace as folders. Scanning walks every key, so it
+// only happens when someone clicks Scan keys; browsing reads the stored snapshot.
+function KeyspacePage({ database }: { database: Database }) {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const refreshDatabase = useRefreshDatabase()
+  const [snapshot, setSnapshot] = useState<SchemaSnapshot | null | undefined>(null)
+  const [scanning, setScanning] = useState(false)
+  const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    setSnapshot(null)
+    void api.getSchema(database.id).then((s) => setSnapshot(s ?? undefined))
+  }, [database.id])
+
+  async function scan() {
+    setScanning(true)
+    try {
+      const s = await api.syncSchema(database.id)
+      setSnapshot(s ?? undefined)
+      refreshDatabase()
+      notify.success(`Scanned ${formatRows(s?.keyspace?.total_keys ?? 0)} keys`)
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : 'Failed to scan keys')
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const keyspace = snapshot?.keyspace
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Keyspace</h2>
+          <p className="text-xs text-slate-500">
+            {snapshot === null
+              ? 'Loading…'
+              : keyspace
+                ? `Scanned ${relativeTime(snapshot!.synced_at)} · ${formatRows(keyspace.total_keys)} keys · folders split on / | :`
+                : 'Not scanned yet'}
+          </p>
+        </div>
+        {can(user?.role, 'edit') ? (
+          <Button variant="secondary" onClick={scan} loading={scanning}>
+            {!scanning ? <FaSync size={12} /> : null} {keyspace ? 'Rescan keys' : 'Scan keys'}
+          </Button>
+        ) : null}
+      </div>
+
+      {keyspace?.truncated ? (
+        <p className="mb-3 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+          <FaExclamationTriangle size={11} /> The scan stopped early on a large keyspace — counts are partial.
+        </p>
+      ) : null}
+
+      {keyspace ? (
+        <div className="relative mb-4 max-w-sm">
+          <FaSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
+          <TextInput
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search keys & folders…"
+            className="pl-9"
+          />
+        </div>
+      ) : null}
+
+      {snapshot === null ? (
+        <Spinner label="Loading keyspace…" />
+      ) : !keyspace ? (
+        <EmptyState
+          icon={<FaFolder />}
+          title="No key scan yet"
+          hint="Scan keys to browse this Redis keyspace as folders. Scanning walks every key, so it only runs when you ask."
+        />
+      ) : (
+        <div className="rounded-xl border border-slate-200/60 bg-white/40 p-2">
+          <KeyspaceTree
+            keyspace={keyspace}
+            query={query}
+            onPickKey={(leaf) => navigate(`/databases/${database.id}/query`, { state: { sql: redisReadCommand(leaf) } })}
+          />
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function TableSchemaPage() {
   const database = useDatabase()
   const { user } = useAuth()
   const [schema, setSchema] = useState<SchemaSnapshot | null | undefined>(null)
