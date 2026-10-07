@@ -3,7 +3,9 @@ import { FaColumns, FaDatabase, FaPencilAlt, FaPlay, FaPlus, FaSave, FaShareAlt,
 import { api } from '../services/api'
 import type { AppSettings, Database, Environment, Project, QueryResult } from '../types'
 import { ENGINE_LABELS } from '../lib/format'
-import { engineDialect, engineSupportsQuery } from '../lib/engines'
+import { engineDialect, engineSupportsQuery, engineUsesSingleConnection } from '../lib/engines'
+import { can } from '../lib/format'
+import { useAuth } from '../context/AuthContext'
 import { ConnectionBadge, EngineBadge } from './badges'
 import { SchemaExplorer } from './SchemaExplorer'
 import { SaveQueryModal } from './SaveQueryModal'
@@ -88,6 +90,10 @@ export function ReadQueryPanel({
   // SQL engines have a sql-formatter dialect; schema-less stores (Redis) don't,
   // which gates the schema explorer, the editor placeholder, and the hint copy.
   const isSqlEngine = activeDb ? engineDialect(activeDb.engine) !== null : true
+  const { user } = useAuth()
+  // Single-credential stores (Redis) run read/write commands for editors; the
+  // server enforces the same rule and falls back to read-only for everyone else.
+  const readWrite = !!activeDb && engineUsesSingleConnection(activeDb.engine) && can(user?.role, 'edit')
 
   useEffect(() => {
     void api.getSettings().then((s) => setQuerySettings(s.query))
@@ -298,14 +304,23 @@ export function ReadQueryPanel({
               <>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold text-slate-800">Read panel</h2>
-                    <ConnectionBadge mode="read" />
+                    <h2 className="text-sm font-semibold text-slate-800">{readWrite ? 'Query' : 'Read panel'}</h2>
+                    <ConnectionBadge mode={readWrite ? 'read_write' : 'read'} />
                   </div>
                   <p className="text-xs text-slate-500">
-                    Read-only — runs on <span className="font-mono">{activeDb.read_connection.host}</span>.{' '}
-                    {isSqlEngine
-                      ? 'Only SELECT / SHOW / WITH / EXPLAIN are permitted.'
-                      : 'Only read-only Redis commands (GET, HGETALL, LRANGE…) are permitted.'}
+                    {readWrite ? (
+                      <>
+                        Read / write — runs on <span className="font-mono">{activeDb.write_connection.host}</span>. Commands
+                        can change data; server-wide admin commands (FLUSHALL, CONFIG…) are blocked.
+                      </>
+                    ) : (
+                      <>
+                        Read-only — runs on <span className="font-mono">{activeDb.read_connection.host}</span>.{' '}
+                        {isSqlEngine
+                          ? 'Only SELECT / SHOW / WITH / EXPLAIN are permitted.'
+                          : 'Only read-only Redis commands (GET, HGETALL, LRANGE…) are permitted.'}
+                      </>
+                    )}
                     {querySettings ? ` Timeout ${querySettings.default_timeout_seconds}s.` : ''}
                   </p>
                 </div>

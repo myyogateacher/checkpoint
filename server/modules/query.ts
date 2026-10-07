@@ -1,10 +1,10 @@
 import { type Router, type Ctx, json, readJson, badRequest } from '../lib/http'
 import { queryOne } from '../db/pool'
-import { requireUser } from '../lib/auth'
+import { requireUser, can } from '../lib/auth'
 import { asJson } from '../lib/serialize'
 import { writeAudit } from '../lib/audit'
 import { loadDb, getConnectionSecret } from './databases.repo'
-import { runReadQuery, assertReadOnly } from '../lib/externalDb'
+import { runReadQuery, assertReadOnly, runCommand, supportsReadWriteQuery } from '../lib/externalDb'
 
 const DEFAULT_TIMEOUT_SECONDS = 30
 
@@ -17,12 +17,34 @@ export async function resolveTimeoutMs(orgId: string): Promise<number> {
 }
 
 export function registerQuery(router: Router) {
-  // Run a read-only query against the database's read connection.
+  // Run a read-only query against the database's read connection. Engines with
+  // inherently read/write credentials (Redis) run the command on the write
+  // connection instead — see Driver.runCommand — for users who can edit; others
+  // fall through to the read-only path.
   router.post('/api/databases/:id/query', async (ctx: Ctx) => {
     const user = requireUser(ctx)
     const db = await loadDb(user.id, ctx.params.id)
     const { sql } = await readJson<{ sql: string }>(ctx.req)
     if (!sql?.trim()) throw badRequest('Empty query.')
+    const oneLine = sql.replace(/\s+/g, ' ').trim()
+    const excerpt = `${oneLine.slice(0, 80)}${oneLine.length > 80 ? '…' : ''}`
+
+    if (supportsReadWriteQuery(db.engine) && can(user.role, 'edit')) {
+      const conn = await getConnectionSecret(db.id, 'write')
+      if (!conn) throw badRequest('No connection configured.')
+      const result = await runCommand(db.engine, conn, sql, await resolveTimeoutMs(db.org_id))
+      await writeAudit({
+        actor: user,
+        orgId: db.org_id,
+        action: 'query.run',
+        entityType: 'database',
+        entityId: db.id,
+        entityLabel: db.name,
+        summary: `Ran command on ${db.name} — ${excerpt}`,
+      })
+      return json(result)
+    }
+
     // Defense in depth: engine-aware read-only validation before connecting.
     assertReadOnly(db.engine, sql)
 
@@ -31,7 +53,6 @@ export function registerQuery(router: Router) {
 
     const timeoutMs = await resolveTimeoutMs(db.org_id)
     const result = await runReadQuery(db.engine, conn, sql, timeoutMs)
-    const oneLine = sql.replace(/\s+/g, ' ').trim()
     await writeAudit({
       actor: user,
       orgId: db.org_id,
@@ -39,7 +60,7 @@ export function registerQuery(router: Router) {
       entityType: 'database',
       entityId: db.id,
       entityLabel: db.name,
-      summary: `Ran read query on ${db.name} — ${oneLine.slice(0, 80)}${oneLine.length > 80 ? '…' : ''}`,
+      summary: `Ran read query on ${db.name} — ${excerpt}`,
     })
     return json(result)
   })

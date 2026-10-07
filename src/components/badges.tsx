@@ -23,11 +23,12 @@ export function DeploymentBadge() {
 const CONN_STYLES = {
   read: 'border-emerald-200/70 bg-emerald-50/80 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/25 dark:text-emerald-200',
   write: 'border-rose-200/70 bg-rose-50/80 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/25 dark:text-rose-200',
+  read_write: 'border-amber-200/70 bg-amber-50/80 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/25 dark:text-amber-200',
 }
 
-const CONN_LABELS = { read: 'Read', write: 'Write' }
+const CONN_LABELS = { read: 'Read', write: 'Write', read_write: 'Read / write' }
 
-export function ConnectionBadge({ mode }: { mode: 'read' | 'write' }) {
+export function ConnectionBadge({ mode }: { mode: 'read' | 'write' | 'read_write' }) {
   return <Badge className={CONN_STYLES[mode]}>{CONN_LABELS[mode]}</Badge>
 }
 

@@ -39,6 +39,17 @@ export function runReadQuery(engine: string, c: ConnectionSecret, queryText: str
   return driverOrThrow(engine).runReadQuery(c, queryText, timeoutMs)
 }
 
+// True when the engine's query panel runs read/write commands (see Driver.runCommand).
+export function supportsReadWriteQuery(engine: string): boolean {
+  return !!getDriver(engine)?.runCommand
+}
+
+export function runCommand(engine: string, c: ConnectionSecret, queryText: string, timeoutMs: number): Promise<QueryResult> {
+  const d = driverOrThrow(engine)
+  if (!d.runCommand) throw new HttpError(400, `${engine} only supports read-only queries.`)
+  return d.runCommand(c, queryText, timeoutMs)
+}
+
 export function applyStatements(engine: string, c: ConnectionSecret, statements: string[]): Promise<void> {
   const d = driverOrThrow(engine)
   if (!d.applyStatements) throw new HttpError(400, `${engine} does not support migrations.`)
